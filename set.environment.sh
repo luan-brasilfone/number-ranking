@@ -1,20 +1,5 @@
 #!/bin/bash
 
-# CREATE DEFAULT CONFIGURATIONS ||||| OK
-# CREATE DEFAULT DATABASE CONFIG ||||| OK
-# CREATE DEFAULT DATABASE ON POSTGRES ||||| OK
-# ADD DEFAULT FIELDS ON DATABASE ||||| OK
-
-# apt install node nodejs npm postgresql redis-cli pm2 -y
-
-# chmod +x set.environment.sh
-# ./set.environment.sh
-# sudo -u postgres ./set.environment.sh --create-database
-# providers insert
-
-# npm install
-# pm2 start ecosystem.config.js
-
 if [ "$1" == "--create-database" ]; then
 
     source .env
