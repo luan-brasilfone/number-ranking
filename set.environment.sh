@@ -38,6 +38,16 @@ if [ "$1" == "--create-database" ]; then
     exit 1
 fi
 
+if [ "$1" == "--add-example-provider" ]; then
+
+    source .env
+
+    example_provider='INSERT INTO providers (code, "MO", "200", "404", "500", "503", "default") VALUES ('\'example\'', 100, 100, 30, 40, 50, 50)'
+    psql -h $DATABASE_HOST -p $DATABASE_PORT -U $DATABASE_USER -d $DATABASE_NAME -c "$example_provider"
+
+    exit 1
+fi
+
 # Prompt for user input
 read -p "Enter app instances (default: 1) = " app_instances
 read -p "Enter database host (default: 127.0.0.1) = " database_host
