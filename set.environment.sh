@@ -4,7 +4,7 @@ if [ "$1" == "--create-database" ]; then
 
     source .env
 
-    createdb -U $DATABASE_USER $DATABASE_NAME
+    createdb -U $DATABASE_USER -h $DATABASE_HOST -p $DATABASE_PORT $DATABASE_NAME 
 
     if [ $? -eq 0 ]; then
         echo "Database created successfully."
