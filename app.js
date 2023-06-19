@@ -1,3 +1,8 @@
+const pg = require('pg');
+const redis = require('redis');
+
+let postgres_client, redis_client;
+
 let instance = 1;
 if (process.argv[2]) instance = process.argv[2];
 
@@ -7,30 +12,14 @@ try{
 } catch (error) {
     console.log('\nNo .env file provided. Using default values...\n');
 
-    env.postgres_client = require('pg');
-    env.redis_client = require('redis');
-
-    const database_config = {
-        host: 'localhost',
-        port: 5432,
-        database: 'ranking',
-        user: 'postgres',
-        password: 'postgres'
-    }
-
-    env.postgres_client = new env.postgres_client.Client(database_config);
-    env.postgres_client.connect();
-
-    env.redis_client = env.redis_client.createClient();
-    env.redis_client.on('error', (error) => {
-        console.log(`Error: ${error}`);
-    });
-
-    env.redis_client.connect();
+    env.database_config = {
+		host: 'localhost',
+		port: 5432,
+		database: 'ranking',
+		user: 'postgres',
+		password: 'postgres'
+	}
 }
-
-const postgres_client = env['postgres_client'];
-const redis_client = env['redis_client'];
 
 let functions = new Object();
 
@@ -168,7 +157,35 @@ functions['get-rank'] = (history) => {
     return Math.round(number_average / provider_total);
 }
 
+functions['connect-to-postgres'] = async () => {
+
+    postgres_client = new pg.Client(env['database_config']);
+    postgres_client.connect(function (err) {
+        if (err) {
+            // settings.consoleLog(`=> [connection: ERROR, message: ${err.message}]`);
+            console.log(err.message);
+        }
+    });
+
+    // const res = await postgres_client.query('SELECT $1::text as message', ['\nSuccesfully connected to database\n']);
+    // console.log(res.rows[0].message);
+}
+
+functions['connect-to-redis'] = async () => {
+
+    redis_client = redis.createClient();
+    
+    redis_client.on('error', (error) => {
+        console.log(`Error: ${error}`);
+    });
+
+    redis_client.connect();
+}
+
 functions['main'] = async () => {
+    
+    await functions['connect-to-postgres']();
+    await functions['connect-to-redis']();
 
     while (true){
         let sms = await redis_client.LPOP(`sms-ranking-${instance}`, (error, reply) => {
