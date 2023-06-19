@@ -24,31 +24,38 @@ function getEnv () {
 let ecosystem = new Object();
 ecosystem.apps = [];
 
-let database_config = {
-    host: env['database_host'],
-    port: env['database_port'],
-    database: env['database_name'],
-    user: env['database_user'],
-    password: env['database_password'],
-};
-
 let api_autorestart = env['api_autorestart'].toLowerCase();
+
+let api_env = {
+    host: env['app_host'],
+    port: env['app_port']
+};
 
 ecosystem.apps.push({
     name: env['api_name'],
     script: env['api_script'],
     autorestart: (api_autorestart !== 'no' && api_autorestart !== 'n'),
-    args: `${env['app_instances']}`,
+    args: `${env['app_instances']} '${JSON.stringify(api_env)}'`,
 });
 
 let app_autorestart = env['app_autorestart'].toLowerCase();
+
+let app_env = {
+    "database_config": {
+        host: env['database_host'],
+        port: env['database_port'],
+        database: env['database_name'],
+        user: env['database_user'],
+        password: env['database_password'],
+    }
+}
 
 for (let i = 1; i <= env['app_instances']; i++) {
     ecosystem.apps.push({
         name: `${env['app_name']}-${i}`,
         script: env['app_script'],
         autorestart: (app_autorestart !== 'no' && app_autorestart !== 'n'),
-        args: `${i} '${JSON.stringify(database_config)}'`,
+        args: `${i} '${JSON.stringify(app_env)}'`,
     });
 }
 

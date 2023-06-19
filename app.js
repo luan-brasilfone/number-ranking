@@ -1,14 +1,13 @@
 const pg = require('pg');
 const redis = require('redis');
 
-
-
 let redis_client, postgres_client;
 
 let functions = new Object();
 
 const instance = process.argv[2];
-const config = JSON.parse(process.argv[3]);
+const env = JSON.parse(process.argv[3]);
+const config = env['database_config'];
 
 functions['connect-to-postgres'] = async () => {
 

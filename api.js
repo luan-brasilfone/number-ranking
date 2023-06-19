@@ -2,12 +2,14 @@ const express = require('express');
 const body_parser = require('body-parser');
 const redis = require('redis');
 
+const instances = process.argv[2];
+const env = JSON.parse(process.argv[3]);
+
 const app = express();
-const port = 3000;
+const host = env['host'];
+const port = env['port'];
 
 let redis_client, functions = new Object();
-
-const instances = process.argv[2];
 
 functions['start-api'] = async () => {
 
@@ -28,7 +30,7 @@ functions['start-api'] = async () => {
 		res.status(200).send(`Succesfully added sms to rank ${req.body.numero}`);
 	});
 
-	app.listen(port, () => console.log(`\nSMS Ranking app listening at http://localhost:${port}\n`));
+	app.listen(port, host, () => console.log(`\nSMS Ranking app listening at http://${host}:${port}\n`));
 }
 
 functions['connect-to-redis'] = async () => {
