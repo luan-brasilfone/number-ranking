@@ -67,6 +67,7 @@ functions['rank-sms'] = async (sms) => {
     console.log(`\nRanking SMS for ${sms.numero} on ${sms.fornecedor}`);
 
 	let provider = await postgres_client.query(`SELECT * FROM providers WHERE code = '${sms.fornecedor}'`);
+    if (provider.rows[0] == undefined) return undefined;
     provider = provider.rows[0];
 
 	let number = sms.numero;
@@ -201,6 +202,11 @@ functions['main'] = async () => {
         let number = sms.numero
     
         let history = await functions['rank-sms'](sms);
+        if (history == undefined) {
+            console.log(`Provider ${sms.fornecedor} not found. Skipping...`);
+            continue;
+        }
+
         let rank = functions['get-rank'](history);
         
         // console.log(rank, sms.numero)
