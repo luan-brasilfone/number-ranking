@@ -66,9 +66,14 @@ functions['rank-sms'] = async (sms) => {
 
     console.log(`\nRanking SMS for ${sms.numero} on ${sms.fornecedor}`);
 
-	let provider = await postgres_client.query(`SELECT * FROM providers WHERE code = '${sms.fornecedor}'`);
-    if (provider.rows[0] == undefined) return undefined;
-    provider = provider.rows[0];
+	let provider = await redis_client.GET(`provider-${sms.fornecedor}`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+
+    provider = JSON.parse(provider);
+
+    if (provider === null) return undefined;
 
 	let number = sms.numero;
 	let provider_leverage = provider[sms.status.toLowerCase()];
@@ -187,7 +192,23 @@ functions['main'] = async () => {
     
     await functions['connect-to-postgres']();
     await functions['connect-to-redis']();
+    
+    let providers_wrapper = await postgres_client.query('SELECT * FROM providers');
+    
+    providers_wrapper.rows.forEach((provider) => {
+        let code = provider.code;
+        delete provider.code;
+        
+        redis_client.SET(`provider-${code}`, JSON.stringify(provider), (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+    });
+    delete providers_wrapper;
 
+    await functions['sleep'](2000).then((result) => {skip = result;});
+
+    console.time('Execution time');
     while (true){
         let sms = await redis_client.LPOP(`sms-ranking-${instance}`, (error, reply) => {
             if (error) console.log(error);
@@ -195,7 +216,10 @@ functions['main'] = async () => {
         });
     
         let skip = false;
-        if (sms == null) await functions['sleep'](10000).then((result) => {skip = result;});
+        if (sms == null) {
+            console.timeEnd('Execution time'); break;
+            // await functions['sleep'](10000).then((result) => {skip = result;});
+        }
         if (skip) continue;
     
         sms = JSON.parse(sms);
