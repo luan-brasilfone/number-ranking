@@ -48,7 +48,7 @@ functions['rank-number'] = (number_average, provider_leverage, sms) => {
     if (sms.status == '200'){
 
         let leverage = (100 - provider_leverage) / 100;
-        let rank = Math.round(number_average * (2 + leverage));
+        let rank = 50 + Math.round(number_average * (2 + leverage));
 
         if (rank > 100) rank = 100;
         return rank;
@@ -72,43 +72,49 @@ functions['rank-sms'] = async (sms) => {
     });
 
     provider = JSON.parse(provider);
-
+    
     if (provider === null) return undefined;
+    provider.code = sms.fornecedor;
 
 	let number = sms.numero;
 	let provider_leverage = provider[sms.status.toLowerCase()];
 
 	let rank = provider_leverage;
 
-	let mo = await postgres_client.query(`SELECT * FROM mo WHERE number = '${number}'`);
-    mo = mo.rows[0];
+	// let mo = await postgres_client.query(`SELECT * FROM mo WHERE number = '${number}'`);
+    let mo = await redis_client.GET(`mo-${number}`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
 
-	let mo_date = mo ? mo.date : null;
-	let mo_balance = mo ? mo.balance : 0;
+    
+    if (mo == null && sms.status == 'MO') mo = 1001;
 
-	if (sms.status == 'MO' && (mo_date == null || functions['get-ymd-date'](mo_date) != functions['get-ymd-date'](new Date())) ) {
-		mo_entry = mo ? mo : new Object();
-        mo_entry.number = number;
-		mo_entry.date = new Date();
-		mo_entry.balance = mo_balance + 1001;
-
-		mo = mo_entry;
-	}
-
-	if (mo != undefined) {
+    mo = null;
+    
+	if (mo != null) {
         console.log(`MO found for ${number}`)
 		rank = 100;
-		mo.balance--;
-		mo.date = functions['get-ymd-date'](mo.date);
+		mo--;
 
-        if (mo.balance == 0){
-            await postgres_client.query(`DELETE FROM mo WHERE number = '${mo.number}'`);
-            mo = undefined;
+        if (mo == 0){
+            // await postgres_client.query(`DELETE FROM mo WHERE number = '${mo.number}'`);
+            await redis_client.DEL(`mo-${number}`, (error, reply) => {
+                if (error) console.log(error);
+                console.log(reply);
+            });
+            mo = false;
         }
 	}
 
-	let history = await postgres_client.query(`SELECT * FROM history WHERE number = '${number}'`);
-    history = history.rows[0];
+	// let history = await postgres_client.query(`SELECT * FROM history WHERE number = '${number}'`);
+    // history = history.rows[0];
+    let history = await redis_client.GET(`history-${number}`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+
+    history = JSON.parse(history);
 
 	if (history != undefined && mo == undefined){
 
@@ -127,7 +133,7 @@ functions['rank-sms'] = async (sms) => {
 
 	sms.peso = rank;
 
-    if (history == undefined ) history = {"number": number};
+    if (history == null ) history = {"number": number};
 	if (history.providers == undefined ) history.providers = new Object();
 	if (history.providers[provider.code] == undefined) history.providers[provider.code] = new Array();
 	
@@ -140,11 +146,24 @@ functions['rank-sms'] = async (sms) => {
 	
 	console.log(`Provider leverage for status ${sms.status} is ${provider_leverage}. History length is ${history.providers[provider.code].length}\n`);
 
-	await postgres_client.query(`INSERT INTO history (number, providers) VALUES ('${history.number}', '${JSON.stringify(history.providers)}') ON CONFLICT (number) DO UPDATE SET providers = '${JSON.stringify(history.providers)}'`);
+	// await postgres_client.query(`INSERT INTO history (number, providers) VALUES ('${history.number}', '${JSON.stringify(history.providers)}') ON CONFLICT (number) DO UPDATE SET providers = '${JSON.stringify(history.providers)}'`);
+    await redis_client.SET(`history-${number}`, JSON.stringify(history), (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
 
-    if (mo == undefined) return history;
+    await redis_client.RPUSH(`history-to-postgres`, number, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
 
-    await postgres_client.query(`INSERT INTO mo (number, balance, date) VALUES ('${mo.number}', '${mo.balance}', '${mo.date}') ON CONFLICT (number) DO UPDATE SET balance = ${mo.balance}, date = '${mo.date}'`);
+    if (!mo) return history;
+
+    // await postgres_client.query(`INSERT INTO mo (number, balance, date) VALUES ('${mo.number}', '${mo.balance}', '${mo.date}') ON CONFLICT (number) DO UPDATE SET balance = ${mo.balance}, date = '${mo.date}'`);
+    await redis_client.SET(`mo-${number}`, mo, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
 
     return history;
 }
@@ -161,6 +180,24 @@ functions['get-rank'] = (history) => {
     });
 
     return Math.round(number_average / provider_total);
+}
+
+functions['redis-to-postgres'] = async () => {
+
+    while (true){
+        let history = await redis_client.LPOP(`history-to-postgres`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+
+        if (history == null) break;
+
+        history = JSON.parse(history);
+
+        console.log(`Inserting history for ${history.number}`);
+
+        await postgres_client.query(`INSERT INTO history (number, providers) VALUES ('${history.number}', '${JSON.stringify(history.providers)}') ON CONFLICT (number) DO UPDATE SET providers = '${JSON.stringify(history.providers)}'`);
+    }
 }
 
 functions['connect-to-postgres'] = async () => {
@@ -198,17 +235,30 @@ functions['main'] = async () => {
     providers_wrapper.rows.forEach((provider) => {
         let code = provider.code;
         delete provider.code;
+
+        Object.keys(provider).forEach((value, key) => {
+            let provider_value = provider[value];
+            delete provider[value];
+            provider[value.toString().toLowerCase()] = provider_value;
+        });
         
         redis_client.SET(`provider-${code}`, JSON.stringify(provider), (error, reply) => {
             if (error) console.log(error);
             console.log(reply);
         });
     });
-    delete providers_wrapper;
+
+    let providers = await redis_client.GET(`provider-example`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+
+    delete providers_wrapper
 
     await functions['sleep'](2000).then((result) => {skip = result;});
 
-    console.time('Execution time');
+    // console.time('Execution time');
+
     while (true){
         let sms = await redis_client.LPOP(`sms-ranking-${instance}`, (error, reply) => {
             if (error) console.log(error);
@@ -217,8 +267,10 @@ functions['main'] = async () => {
     
         let skip = false;
         if (sms == null) {
-            console.timeEnd('Execution time'); break;
+            // console.timeEnd('Execution time'); break;
             // await functions['sleep'](10000).then((result) => {skip = result;});
+            await functions['redis-to-postgres']();
+            skip = true;
         }
         if (skip) continue;
     

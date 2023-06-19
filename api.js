@@ -29,6 +29,13 @@ functions['get-zscore'] = async (number = false) => {
 
 	if (!number) return 'No number provided';
 
+	let mo = await redis_client.GET(`mo-${number}`, (error, reply) => {
+		if (error) console.log(error);
+		console.log(reply);
+	});
+
+	if (mo != null) return 100;
+
 	let rank = await redis_client.ZSCORE('rank', number, (error, reply) => {
 		if (error) console.log(error);
 		console.log(reply);
