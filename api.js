@@ -1,8 +1,43 @@
 const express = require('express');
 const body_parser = require('body-parser');
+let pg, redis;
 
-const instances = process.argv[2];
-const env = JSON.parse(process.argv[3]);
+let instances = 1;
+if (process.argv[2]) instances = process.argv[2];
+
+let env = new Object();
+try{
+	env = JSON.parse(process.argv[3]);
+} catch (error) {
+	console.log('\nNo .env file provided. Using default values...');
+
+	env.host = 'localhost';
+	env.port = 3000;
+
+	pg = require('pg'), redis = require('redis');
+
+	const database_config = {
+		host: 'localhost',
+		port: 5432,
+		database: 'ranking',
+		user: 'postgres',
+		password: 'postgres'
+	}
+
+	env.postgres_client = new pg.Client(database_config);
+
+	env.postgres_client.connect(function (error) {
+        if (error) console.log(error.message);
+    });
+
+	env.redis_client = redis.createClient();
+	env.redis_client.on('error', (error) => {
+		console.log(`Error: ${error}`);
+	});
+
+	env.redis_client.connect();
+}
+
 const postgres_client = env['postgres_client'];
 const redis_client = env['redis_client'];
 
@@ -13,8 +48,6 @@ const port = env['port'];
 let functions = new Object();
 
 functions['start-api'] = async () => {
-
-    await functions['connect-to-redis']();
 
 	app.use(body_parser.urlencoded({ extended: false }));
 	app.use(body_parser.json());

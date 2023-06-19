@@ -5,9 +5,6 @@ const redis = require('redis');
 const env_path = '.env';
 const env = getEnv();
 
-const postgres_client = connectToPostgres();
-const redis_client = connectToRedis();
-
 const database_config = {
     host: env['database_host'],
     port: env['database_port'],
@@ -15,6 +12,8 @@ const database_config = {
     user: env['database_user'],
     password: env['database_password'],
 }
+
+let postgres_client, redis_client;
 
 let ecosystem = new Object();
 ecosystem.apps = [];
@@ -79,7 +78,7 @@ async function connectToPostgres () {
         }
     });
 
-    const res = await postgres_client.query('SELECT $1::text as message', ['\nSuccesfully connected to database\n']);
+    // const res = await postgres_client.query('SELECT $1::text as message', ['\nSuccesfully connected to database\n']);
     // console.log(res.rows[0].message);
 }
 
@@ -93,5 +92,8 @@ async function connectToRedis () {
 
     redis_client.connect();
 }
+
+connectToPostgres();
+connectToRedis();
 
 module.exports = ecosystem;

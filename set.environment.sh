@@ -68,107 +68,147 @@ if [ "$1" == "--add-example-provider" ]; then
     exit 0
 fi
 
-# Prompt for user input
-read -p "Enter app instances (default: 1) = " app_instances;
-read -p "Use default api settings? (yes/no) (default: yes) = " api_use_default;
-if [ "$api_use_default" == "no" ] || [ "$api_use_default" == "n" ]; then
-    read -p "Enter api hostname (default: localhost) = " api_host;
-    read -p "Enter api port (default: 3000) = " api_port;
-fi; echo
+if [ "$1" == "--use-last-choices" ]; then
 
-read -p "Use docker? (yes/no) (default: no) = " use_docker;
-if [ "$use_docker" == "yes" ] || [ "$use_docker" == "y" ]; then
-    read -p "Enter Postgres container name (default: postgres-container) = " container_postgres
-fi; echo
+    source .env
 
-read -p "Use default database settings? (yes/no) (default: yes) = " database_use_default
-if [ "$database_use_default" == "no" ] || [ "$database_use_default" == "n" ]; then
-    read -p "Enter database host (default: localhost) = " database_host
-    read -p "Enter database port (default: 5432) = " database_port
-    read -p "Enter database name (default: ranking) = " database_name
-    read -p "Enter database user (default: postgres) = " database_user
-    read -p "Enter database password (default: postgres) = " database_password
-fi; echo
+else
 
+    # Prompt for user input
+    read -p "Enter app instances (default: 1) = " app_instances;
+    read -p "Use default api settings? (yes/no) (default: yes) = " api_use_default;
+    if [ "$api_use_default" == "no" ] || [ "$api_use_default" == "n" ]; then
+        read -p "Enter api hostname (default: localhost) = " api_host;
+        read -p "Enter api port (default: 3000) = " api_port;
+    fi; echo
 
-# Set default values
-if [ -z "$app_name" ]; then
-    app_name="ranking-app"
-fi
-if [ -z "$app_script" ]; then
-    app_script="app.js"
-fi
-if [ -z "$app_autorestart" ]; then
-    app_autorestart="yes"
-fi
-if [ -z "$app_instances" ]; then
-    app_instances=1
+    read -p "Use default database settings? (yes/no) (default: yes) = " database_use_default
+    if [ "$database_use_default" == "no" ] || [ "$database_use_default" == "n" ]; then
+        read -p "Enter database host (default: localhost) = " database_host
+        read -p "Enter database port (default: 5432) = " database_port
+        read -p "Enter database name (default: ranking) = " database_name
+        read -p "Enter database user (default: postgres) = " database_user
+        read -p "Enter database password (default: postgres) = " database_password
+    fi; echo
+
+    read -p "Are either Nodejs or Postgresql going to run in a container? (yes/no) (default: no) = " use_containers;
+    if [ "$use_containers" == "yes" ] || [ "$use_containers" == "y" ]; then
+        read -p "Is Postgresql going to run in a container? (yes/no) (default: yes) = " use_postgres_container;
+        if [ "$use_postgres_container" != "no" ] && [ "$use_postgres_container" != "n" ]; then
+            read -p "Enter Postgresql container name (default: postgres-container) = " container_postgres
+        fi;
+        read -p "Is Nodejs going to run in a container? (yes/no) (default: yes) = " use_node_container;
+        if [ "$use_node_container" != "no" ] && [ "$use_node_container" != "n" ]; then
+            read -p "Enter Nodejs container name (default: node-container) = " container_node
+        fi;
+
+        if [ "$use_postgres_container" != "no" ] && [ "$use_postgres_container" != "n" ] && [ -z "$container_postgres" ]; then
+            container_postgres="postgres-container"
+        fi
+        if [ "$use_node_container" != "no" ] && [ "$use_node_container" != "n" ] && [ -z "$container_node" ]; then
+            container_node="node-container"
+        fi
+
+        if [ -n $container_postgres ] && [ -z "$container_node" ]; then
+            read -p "Enter Postgresql container port (default: 5432) = " container_postgres_port
+            if [ -z "$container_postgres_port" ]; then
+                container_postgres_port=5432
+            fi
+        fi
+
+        if [ -z "$container_postgres" ] && [ -n "$container_node" ]; then
+            YELLOW='\033[0;33m'
+            NC='\033[0m'
+            echo; echo -e "${YELLOW}Running Nodejs in a container and Postgresql on host is not supported. If you run into any error, please consider running both in a container.${NC}"
+        fi
+    fi; echo
+
+    # Set default values
+    if [ -z "$app_name" ]; then
+        app_name="ranking-app"
+    fi
+    if [ -z "$app_script" ]; then
+        app_script="app.js"
+    fi
+    if [ -z "$app_autorestart" ]; then
+        app_autorestart="yes"
+    fi
+    if [ -z "$app_instances" ]; then
+        app_instances=1
+    fi
+
+    if [ -z "$api_host" ]; then
+        api_host="localhost"
+    fi
+    if [ -z "$api_port" ]; then
+        api_port="3000"
+    fi
+    if [ -z "$api_name" ]; then
+        api_name="ranking-api"
+    fi
+    if [ -z "$api_script" ]; then
+        api_script="api.js"
+    fi
+    if [ -z "$api_autorestart" ]; then
+        api_autorestart="yes"
+    fi
+
+    if [ -z "$database_host" ]; then
+        database_host="localhost"
+    fi
+    if [ -z "$database_port" ]; then
+        database_port=5432
+    fi
+    if [ -z "$database_name" ]; then
+        database_name="ranking"
+    fi
+    if [ -z "$database_user" ]; then
+        database_user="postgres"
+    fi
+    if [ -z "$database_password" ]; then
+        database_password="postgres"
+    fi
+
+    if [ -z "$use_containers" ]; then
+        use_containers="no"
+    fi
 fi
 
-if [ -z "$api_host" ]; then
-    api_host="localhost"
-fi
-if [ -z "$api_port" ]; then
-    api_port="3000"
-fi
-if [ -z "$api_name" ]; then
-    api_name="ranking-api"
-fi
-if [ -z "$api_script" ]; then
-    api_script="api.js"
-fi
-if [ -z "$api_autorestart" ]; then
-    api_autorestart="yes"
-fi
+if [ "$use_containers" == "yes" ] || [ "$use_containers" == "y" ]; then
+    if [ -n "$container_postgres_port" ]; then
+        echo "Setting database port to container port."
+        database_port="$container_postgres_port"
+    fi
 
-if [ -z "$database_host" ]; then
-    database_host="localhost"
-fi
-if [ -z "$database_port" ]; then
-    database_port=5432
-fi
-if [ -z "$database_name" ]; then
-    database_name="ranking"
-fi
-if [ -z "$database_user" ]; then
-    database_user="postgres"
-fi
-if [ -z "$database_password" ]; then
-    database_password="postgres"
-fi
-
-if [ -z "$use_docker" ]; then
-    use_docker="no"
-fi
-if [ -z "$container_postgres" ]; then
-    container_postgres="postgres-container"
-fi
-
-if [ "$use_docker" == "yes" ] || [ "$use_docker" == "y" ]; then
-    database_host=$container_postgres
+    if [ -n "$container_postgres" ] && [ -n "$container_node" ]; then
+        echo "Setting database host to container name."
+        database_host="$container_postgres"
+    fi
 fi
 
 # Generate .env file
 cat > .env <<EOL
-DATABASE_HOST=$database_host
-DATABASE_PORT=$database_port
-DATABASE_NAME=$database_name
-DATABASE_USER=$database_user
-DATABASE_PASSWORD=$database_password
+database_host=$database_host
+database_port=$database_port
+database_name=$database_name
+database_user=$database_user
+database_password=$database_password
 
-APP_INSTANCES=$app_instances
-APP_NAME=$app_name
-APP_SCRIPT=$app_script
-APP_AUTORESTART=$app_autorestart
+app_instances=$app_instances
+api_host=$api_host
+api_port=$api_port
 
-API_HOST=$api_host
-API_PORT=$api_port
-API_NAME=$api_name
-API_SCRIPT=$api_script
-API_AUTORESTART=$api_autorestart
+use_containers=$use_containers
+container_node=$container_node
+container_postgres=$container_postgres
+container_postgres_port=$container_postgres_port
 
-USE_DOCKER=$use_docker
-POSTGRES_CONTAINER=$container_postgres
+app_name=$app_name
+app_script=$app_script
+app_autorestart=$app_autorestart
+api_name=$api_name
+api_script=$api_script
+api_autorestart=$api_autorestart
 EOL
 
 echo ".env file has been created. For additional configurations, please edit the .env file."

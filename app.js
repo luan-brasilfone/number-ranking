@@ -1,5 +1,34 @@
-const instance = process.argv[2];
-const env = JSON.parse(process.argv[3]);
+let instance = 1;
+if (process.argv[2]) instance = process.argv[2];
+
+let env = new Object();
+try{
+    env = JSON.parse(process.argv[3]);
+} catch (error) {
+    console.log('\nNo .env file provided. Using default values...\n');
+
+    env.postgres_client = require('pg');
+    env.redis_client = require('redis');
+
+    const database_config = {
+        host: 'localhost',
+        port: 5432,
+        database: 'ranking',
+        user: 'postgres',
+        password: 'postgres'
+    }
+
+    env.postgres_client = new env.postgres_client.Client(database_config);
+    env.postgres_client.connect();
+
+    env.redis_client = env.redis_client.createClient();
+    env.redis_client.on('error', (error) => {
+        console.log(`Error: ${error}`);
+    });
+
+    env.redis_client.connect();
+}
+
 const postgres_client = env['postgres_client'];
 const redis_client = env['redis_client'];
 
@@ -140,9 +169,6 @@ functions['get-rank'] = (history) => {
 }
 
 functions['main'] = async () => {
-
-    await functions['connect-to-redis']();
-    await functions['connect-to-postgres']();
 
     while (true){
         let sms = await redis_client.LPOP(`sms-ranking-${instance}`, (error, reply) => {
