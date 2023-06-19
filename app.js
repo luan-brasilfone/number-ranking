@@ -1,38 +1,9 @@
-const pg = require('pg');
-const redis = require('redis');
-
-let redis_client, postgres_client;
-
-let functions = new Object();
-
 const instance = process.argv[2];
 const env = JSON.parse(process.argv[3]);
-const config = env['database_config'];
+const postgres_client = env['postgres_client'];
+const redis_client = env['redis_client'];
 
-functions['connect-to-postgres'] = async () => {
-
-    postgres_client = new pg.Client(config);
-    postgres_client.connect(function (err) {
-        if (err) {
-            // settings.consoleLog(`=> [connection: ERROR, message: ${err.message}]`);
-            console.log(err.message);
-        }
-    });
-
-    const res = await postgres_client.query('SELECT $1::text as message', ['\nSuccesfully connected to database\n']);
-    // console.log(res.rows[0].message);
-}
-
-functions['connect-to-redis'] = async () => {
-
-    redis_client = redis.createClient();
-    
-    redis_client.on('error', (error) => {
-        console.log(`Error: ${error}`);
-    });
-
-    redis_client.connect();
-}
+let functions = new Object();
 
 functions['sleep'] = (delay) => {
 

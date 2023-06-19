@@ -1,15 +1,16 @@
 const express = require('express');
 const body_parser = require('body-parser');
-const redis = require('redis');
 
 const instances = process.argv[2];
 const env = JSON.parse(process.argv[3]);
+const postgres_client = env['postgres_client'];
+const redis_client = env['redis_client'];
 
 const app = express();
 const host = env['host'];
 const port = env['port'];
 
-let redis_client, functions = new Object();
+let functions = new Object();
 
 functions['start-api'] = async () => {
 
@@ -31,17 +32,6 @@ functions['start-api'] = async () => {
 	});
 
 	app.listen(port, host, () => console.log(`\nSMS Ranking app listening at http://${host}:${port}\n`));
-}
-
-functions['connect-to-redis'] = async () => {
-
-    redis_client = redis.createClient();
-    
-    redis_client.on('error', (error) => {
-        console.log(`Error: ${error}`);
-    });
-
-    redis_client.connect();
 }
 
 functions['get-zscore'] = async (number = false) => {
