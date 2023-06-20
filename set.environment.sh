@@ -8,17 +8,17 @@ if [ "$1" == "--create-database" ]; then
     table_mo='CREATE TABLE IF NOT EXISTS "mo" ("number" VARCHAR(20) PRIMARY KEY, "balance" INT, "date" DATE);'
     table_providers='CREATE TABLE IF NOT EXISTS "providers" ("code" VARCHAR(20) PRIMARY KEY, "MO" INT, "200" INT, "404" INT, "500" INT, "503" INT, "default" INT);'
 
-    command_drop="PGPASSWORD=$DATABASE_PASSWORD dropdb $DATABASE_NAME -U $DATABASE_USER -h $DATABASE_HOST -p $DATABASE_PORT --if-exists"
-    command_create="PGPASSWORD=$DATABASE_PASSWORD createdb $DATABASE_NAME -U $DATABASE_USER -h $DATABASE_HOST -p $DATABASE_PORT -e"
+    command_drop="PGPASSWORD=$database_password dropdb $database_name -U $database_user -h $database_host -p $database_port --if-exists"
+    command_create="PGPASSWORD=$database_password createdb $database_name -U $database_user -h $database_host -p $database_port -e"
 
-    command_history="PGPASSWORD=$DATABASE_PASSWORD psql -d $DATABASE_NAME -U $DATABASE_USER -h $DATABASE_HOST -p $DATABASE_PORT -c '$table_history'"
-    command_mo="PGPASSWORD=$DATABASE_PASSWORD psql -d $DATABASE_NAME -U $DATABASE_USER -h $DATABASE_HOST -p $DATABASE_PORT -c '$table_mo'"
-    command_providers="PGPASSWORD=$DATABASE_PASSWORD psql -d $DATABASE_NAME -U $DATABASE_USER -h $DATABASE_HOST -p $DATABASE_PORT -c '$table_providers'"
+    command_history="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_history'"
+    command_mo="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_mo'"
+    command_providers="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_providers'"
 
-    if [ "$USE_DOCKER" == "yes" ] || [ "$USE_DOCKER" == "y" ]; then
+    if [ "$use_containers" == "yes" ] || [ "$use_containers" == "y" ]; then
 
-        docker exec $POSTGRES_CONTAINER sh -c "$command_drop"
-        docker exec $POSTGRES_CONTAINER sh -c "$command_create"
+        docker exec $container_postgres sh -c "$command_drop"
+        docker exec $container_postgres sh -c "$command_create"
 
         if [ $? -eq 0 ]; then
             echo "Database created successfully."
@@ -26,9 +26,9 @@ if [ "$1" == "--create-database" ]; then
             echo "Failed to create the database. Check your permissions and .env values."
         fi
 
-        docker exec $POSTGRES_CONTAINER sh -c "$command_history"
-        docker exec $POSTGRES_CONTAINER sh -c "$command_mo"
-        docker exec $POSTGRES_CONTAINER sh -c "$command_providers"
+        docker exec $container_postgres sh -c "$command_history"
+        docker exec $container_postgres sh -c "$command_mo"
+        docker exec $container_postgres sh -c "$command_providers"
 
         exit 0
     fi
@@ -54,11 +54,11 @@ if [ "$1" == "--add-example-provider" ]; then
     source .env
 
     insert_provider='INSERT INTO providers (code, \"MO\", \"200\", \"404\", \"500\", \"503\", \"default\") VALUES ('\'example\'', 100, 100, 30, 40, 50, 50)'
-    command_insert="PGPASSWORD=$DATABASE_PASSWORD psql -d $DATABASE_NAME -U $DATABASE_USER -h $DATABASE_HOST -p $DATABASE_PORT -c "\"$insert_provider\"""
+    command_insert="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c "\"$insert_provider\"""
 
-    if [ "$USE_DOCKER" == "yes" ] || [ "$USE_DOCKER" == "y" ]; then
+    if [ "$use_containers" == "yes" ] || [ "$use_containers" == "y" ]; then
 
-        docker exec $POSTGRES_CONTAINER sh -c "$command_insert"
+        docker exec $container_postgres sh -c "$command_insert"
 
         exit 0
     fi
