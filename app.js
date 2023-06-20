@@ -107,14 +107,18 @@ functions['rank-sms'] = async (sms) => {
         }
 	}
 
-	// let history = await postgres_client.query(`SELECT * FROM history WHERE number = '${number}'`);
-    // history = history.rows[0];
     let history = await redis_client.GET(`history-${number}`, (error, reply) => {
         if (error) console.log(error);
         console.log(reply);
     });
 
     history = JSON.parse(history);
+
+    if (history == null){
+
+        history = await postgres_client.query(`SELECT * FROM history WHERE number = '${number}'`);
+        history = history.rows[0];
+    }
 
 	if (history != undefined && mo == undefined){
 
@@ -152,10 +156,18 @@ functions['rank-sms'] = async (sms) => {
         console.log(reply);
     });
 
-    await redis_client.RPUSH(`history-to-postgres`, number, (error, reply) => {
+    let history_to_postgres = await redis_client.GET(`history-to-postgres`, (error, reply) => {
         if (error) console.log(error);
         console.log(reply);
     });
+
+    if (history_to_postgres == null) history_to_postgres = '';
+
+    if ( history_to_postgres == '' || !history_to_postgres.includes(number) )
+        await redis_client.SET(`history-to-postgres`, `${history_to_postgres}${number}/${instance}/`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
 
     if (!mo) return history;
 
@@ -183,21 +195,40 @@ functions['get-rank'] = (history) => {
 }
 
 functions['redis-to-postgres'] = async () => {
+    
+    let history_to_postgres = await redis_client.GET(`history-to-postgres`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
 
-    while (true){
-        let history = await redis_client.LPOP(`history-to-postgres`, (error, reply) => {
+    let pattern = new RegExp(`[0-9]+\/${instance}\/`);
+
+    while (true) {
+
+        if (history_to_postgres == "") break;
+
+        let number = history_to_postgres.match(pattern)[0].replace(`/${instance}/`, '');
+
+        history_to_postgres = history_to_postgres.replace(`${number}/${instance}/`, '');
+
+        let history = await redis_client.GET(`history-${number}`, (error, reply) => {
             if (error) console.log(error);
             console.log(reply);
         });
 
-        if (history == null) break;
+        if (history == null) continue;
 
         history = JSON.parse(history);
 
-        console.log(`Inserting history for ${history.number}`);
+        console.log(`Inserting history for ${number} on instance ${instance}`);
 
-        await postgres_client.query(`INSERT INTO history (number, providers) VALUES ('${history.number}', '${JSON.stringify(history.providers)}') ON CONFLICT (number) DO UPDATE SET providers = '${JSON.stringify(history.providers)}'`);
+        await postgres_client.query(`INSERT INTO history (number, providers) VALUES ('${number}', '${JSON.stringify(history.providers)}') ON CONFLICT (number) DO UPDATE SET providers = '${JSON.stringify(history.providers)}'`);
     }
+
+    await redis_client.DEL(`history-to-postgres`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
 }
 
 functions['connect-to-postgres'] = async () => {
@@ -255,9 +286,10 @@ functions['main'] = async () => {
 
     delete providers_wrapper
 
-    await functions['sleep'](2000).then((result) => {skip = result;});
+    await functions['sleep'](2000).then(() => {});
 
-    // console.time('Execution time');
+    console.time('Execution time');
+    let testing_time = true;
 
     while (true){
         let sms = await redis_client.LPOP(`sms-ranking-${instance}`, (error, reply) => {
@@ -265,14 +297,26 @@ functions['main'] = async () => {
             console.log(reply);
         });
     
-        let skip = false;
         if (sms == null) {
-            // console.timeEnd('Execution time'); break;
-            // await functions['sleep'](10000).then((result) => {skip = result;});
+            
+            if (testing_time) {
+                console.timeEnd('Execution time'); console.log()
+                testing_time = false;
+            }
+
+            let history_to_postgres = await redis_client.GET(`history-to-postgres`, (error, reply) => {
+                if (error) console.log(error);
+                console.log(reply);
+            });
+
+            if (history_to_postgres == null){
+                await functions['sleep'](10000).then(() => {});
+                continue;
+            }
+
             await functions['redis-to-postgres']();
-            skip = true;
+            continue;
         }
-        if (skip) continue;
     
         sms = JSON.parse(sms);
         let number = sms.numero
