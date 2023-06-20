@@ -108,11 +108,8 @@ functions['rank-sms'] = async (sms) => {
         if (error) console.log(error);
         console.log(reply);
     });
-
     
-    if (mo == null && sms.status == 'MO') mo = 1001;
-
-    mo = null;
+    if (mo == null && sms.status.toUpperCase() == 'MO') mo = 1001;
     
 	if (mo != null) {
         console.log(`MO found for ${number}`)
@@ -129,18 +126,18 @@ functions['rank-sms'] = async (sms) => {
         }
 	}
 
-    let history = await redis_client.GET(`history-${number}`, (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
+    // let history = await redis_client.GET(`history-${number}`, (error, reply) => {
+    //     if (error) console.log(error);
+    //     console.log(reply);
+    // });
 
-    history = JSON.parse(history);
+    // history = JSON.parse(history);
 
-    if (history == null){
+    // if (history == null){
 
         history = await postgres_client.query(`SELECT * FROM history WHERE number = '${number}'`);
         history = history.rows[0];
-    }
+    // }
 
 	if (history != undefined && mo == undefined){
 
@@ -186,7 +183,7 @@ functions['rank-sms'] = async (sms) => {
     if (history_to_postgres == null) history_to_postgres = '';
 
     if ( history_to_postgres == '' || !history_to_postgres.includes(number) )
-        await redis_client.SET(`history-to-postgres`, `${history_to_postgres}${number}/${instance}/`, (error, reply) => {
+        await redis_client.SET(`history-to-postgres`, `${history_to_postgres}${number}~${instance}/`, (error, reply) => {
             if (error) console.log(error);
             console.log(reply);
         });
@@ -198,6 +195,19 @@ functions['rank-sms'] = async (sms) => {
         if (error) console.log(error);
         console.log(reply);
     });
+
+    let mo_to_postgres = await redis_client.GET(`mo-to-postgres`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+
+    if (mo_to_postgres == null) mo_to_postgres = '';
+
+    if ( mo_to_postgres == '' || !mo_to_postgres.includes(number) )
+        await redis_client.SET(`mo-to-postgres`, `${mo_to_postgres}${number}~${instance}/`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
 
     return history;
 }
@@ -269,15 +279,17 @@ functions['persist-history'] = async () => {
         console.log(reply);
     });
 
-    let pattern = new RegExp(`[0-9]+\/${instance}\/`);
+    let pattern = new RegExp(`[0-9]+~${instance}\/`);
 
     while (true) {
 
         if (history_to_postgres == "") break;
 
-        let number = history_to_postgres.match(pattern)[0].replace(`/${instance}/`, '');
-
-        history_to_postgres = history_to_postgres.replace(`${number}/${instance}/`, '');
+        let number = history_to_postgres.match(pattern)[0].replace(`~${instance}/`, '');
+        
+        console.log('Trying to persist HISTORY for', number);
+        
+        history_to_postgres = history_to_postgres.replace(`${number}~${instance}/`, '');
 
         let history = await redis_client.GET(`history-${number}`, (error, reply) => {
             if (error) console.log(error);
@@ -291,9 +303,51 @@ functions['persist-history'] = async () => {
         console.log(`Inserting history for ${number} on instance ${instance}`);
 
         await postgres_client.query(`INSERT INTO history (number, providers) VALUES ('${number}', '${JSON.stringify(history.providers)}') ON CONFLICT (number) DO UPDATE SET providers = '${JSON.stringify(history.providers)}'`);
+
+        await redis_client.DEL(`history-${number}`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
     }
 
     await redis_client.DEL(`history-to-postgres`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+}
+
+functions['persist-mo'] = async () => {
+    
+    let mo_to_postgres = await redis_client.GET(`mo-to-postgres`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+
+    let pattern = new RegExp(`[0-9]+~${instance}\/`);
+
+    while (true) {
+
+        if (mo_to_postgres == "") break;
+
+        let number = mo_to_postgres.match(pattern)[0].replace(`~${instance}/`, '');
+
+        mo_to_postgres = mo_to_postgres.replace(`${number}~${instance}/`, '');
+
+        let mo = await redis_client.GET(`mo-${number}`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+
+        if (mo == null) continue;
+
+        // mo = JSON.parse(mo);
+
+        console.log(`Inserting MO for ${number} on instance ${instance}`);
+
+        await postgres_client.query(`INSERT INTO mo ("number", "balance", "date") VALUES ('${number}', '${mo}', '${functions['get-ymd-date'](new Date())}') ON CONFLICT (number) DO UPDATE SET balance = ${mo}, date = '${functions['get-ymd-date'](new Date())}'`);
+    }
+
+    await redis_client.DEL(`mo-to-postgres`, (error, reply) => {
         if (error) console.log(error);
         console.log(reply);
     });
@@ -340,7 +394,7 @@ functions['main'] = async () => {
     
     let providers_wrapper = await postgres_client.query('SELECT * FROM providers');
     
-    providers_wrapper.rows.forEach((provider) => {
+    if (providers_wrapper.rows.length > 0) providers_wrapper.rows.forEach((provider) => {
         let code = provider.code;
         delete provider.code;
 
@@ -358,11 +412,46 @@ functions['main'] = async () => {
 
     delete providers_wrapper
 
+    let mos = await functions['redis-scan'](0, {MATCH: 'mo-*', COUNT: 1000});
+
+    Object.keys(mos).forEach(key => {
+        redis_client.DEL(key, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+    });
+    
+    let mos_wrapper = await postgres_client.query('SELECT * FROM mo');
+
+    if (mos_wrapper.rows.length > 0) mos_wrapper.rows.forEach((mo) => {
+        let number = mo.number;
+        delete mo.number;
+
+        redis_client.SET(`mo-${number}`, mo.balance, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+    });
+
+    // let histories = await functions['redis-scan'](0, {MATCH: 'history-*', COUNT: 1000});
+
+    // console.log(histories);
+
+    // Object.keys(histories).forEach(key => {
+    //     redis_client.DEL(key, (error, reply) => {
+    //         if (error) console.log(error);
+    //         console.log(reply);
+    //     });
+    // });
+
+    // return;
+
     await functions['sleep'](2000).then(() => {});
 
     console.time('Execution time');
     let testing_time = true;
 
+    let counter = 0;
     while (true){
 
         let providers = await redis_client.LLEN(`providers`, (error, reply) => {
@@ -373,6 +462,11 @@ functions['main'] = async () => {
         if (providers > 0) {
             await functions['persist-providers']();
             continue;
+        }
+
+        if (counter >= 100) {
+            await functions['persist-history']();
+            counter = 0; continue;
         }
 
         let sms = await redis_client.LPOP(`sms-ranking-${instance}`, (error, reply) => {
@@ -396,6 +490,16 @@ functions['main'] = async () => {
                 await functions['persist-history']();
                 continue;
             }
+
+            let mo_to_postgres = await redis_client.GET(`mo-to-postgres`, (error, reply) => {
+                if (error) console.log(error);
+                console.log(reply);
+            });
+
+            if (mo_to_postgres != null){
+                await functions['persist-mo']();
+                continue;
+            }
             
             await functions['sleep'](10000).then(() => {});
             continue;
@@ -417,6 +521,8 @@ functions['main'] = async () => {
             if (error) console.log(error);
             console.log(reply);
         });
+
+        counter++;
     }
 }
 
