@@ -25,7 +25,7 @@ let functions = new Object();
 
 functions['sleep'] = (delay) => {
 
-    console.log('No SMS found to rank. Sleeping...')
+    console.log('No SMS to rank or data to persist. Sleeping...')
 
     return new Promise((resolve) => {
         setTimeout(() => {
@@ -41,6 +41,28 @@ functions['get-ymd-date'] = (date) => {
     let day = String(date.getDate()).padStart(2, '0');
 
     return year + '-' + month + '-' + day;
+}
+
+functions['redis-scan'] = async (cursor, options, output = {}) => {
+
+	let scan = await redis_client.SCAN(cursor, options, (error, reply) => {
+		if (error) console.log(error);
+		console.log(reply);
+	});
+
+	const promises = scan.keys.map(async key => {
+		let row = await redis_client.GET(key, (error, reply) => {
+			if (error) console.log(error);
+			console.log(reply);
+		});
+		output[key] = row;
+	});
+
+	await Promise.all(promises);
+
+	if (scan.cursor != 0) functions['redis-scan'](scan.cursor, options, output);
+
+	return output;
 }
 
 functions['rank-number'] = (number_average, provider_leverage, sms) => {
@@ -194,7 +216,53 @@ functions['get-rank'] = (history) => {
     return Math.round(number_average / provider_total);
 }
 
-functions['redis-to-postgres'] = async () => {
+functions['persist-providers'] = async () => {
+
+    while (true) {
+
+        let code = await redis_client.LPOP(`providers`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+
+        if (code == null) break;
+
+        let method = code.slice(0, 3);
+        code = code.replace(`${method}/`, '');
+
+        if (method == 'del') {
+
+            console.log(`Deleting provider ${code} on instance ${instance}`);
+
+            await postgres_client.query(`DELETE FROM providers WHERE code = '${code}'`);
+            continue;
+        }
+
+        let provider = await redis_client.GET(`provider-${code}`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+
+        if (provider == null) continue;
+
+        provider = JSON.parse(provider);
+
+        console.log(`Inserting provider ${code} on instance ${instance}`);
+
+        let fields = new Array();
+		fields.push(`'${code}'`);
+		fields.push(`'${provider['mo']}'`);
+		fields.push(`'${provider['200']}'`);
+		fields.push(`'${provider['404']}'`);
+		fields.push(`'${provider['500']}'`);
+		fields.push(`'${provider['503']}'`);
+		fields.push(`'${provider['default']}'`);
+
+        await postgres_client.query(`INSERT INTO providers (code, "MO", "200", "404", "500", "503", "default") VALUES (${fields.join(', ')}) ON CONFLICT (code) DO UPDATE SET "MO" = '${provider['mo']}', "200" = '${provider['200']}', "404" = '${provider['404']}', "500" = '${provider['500']}', "503" = '${provider['503']}', "default" = '${provider['default']}'`);
+    }
+}
+
+functions['persist-history'] = async () => {
     
     let history_to_postgres = await redis_client.GET(`history-to-postgres`, (error, reply) => {
         if (error) console.log(error);
@@ -260,6 +328,15 @@ functions['main'] = async () => {
     
     await functions['connect-to-postgres']();
     await functions['connect-to-redis']();
+
+    let providers = await functions['redis-scan'](0, {MATCH: 'provider-*'});
+
+    Object.keys(providers).forEach(key => {
+        redis_client.DEL(key, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+    });
     
     let providers_wrapper = await postgres_client.query('SELECT * FROM providers');
     
@@ -279,11 +356,6 @@ functions['main'] = async () => {
         });
     });
 
-    let providers = await redis_client.GET(`provider-example`, (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
-
     delete providers_wrapper
 
     await functions['sleep'](2000).then(() => {});
@@ -292,6 +364,17 @@ functions['main'] = async () => {
     let testing_time = true;
 
     while (true){
+
+        let providers = await redis_client.LLEN(`providers`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+
+        if (providers > 0) {
+            await functions['persist-providers']();
+            continue;
+        }
+
         let sms = await redis_client.LPOP(`sms-ranking-${instance}`, (error, reply) => {
             if (error) console.log(error);
             console.log(reply);
@@ -309,12 +392,12 @@ functions['main'] = async () => {
                 console.log(reply);
             });
 
-            if (history_to_postgres == null){
-                await functions['sleep'](10000).then(() => {});
+            if (history_to_postgres != null){
+                await functions['persist-history']();
                 continue;
             }
-
-            await functions['redis-to-postgres']();
+            
+            await functions['sleep'](10000).then(() => {});
             continue;
         }
     
