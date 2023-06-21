@@ -169,24 +169,24 @@ functions['rank-sms'] = async (sms) => {
 	
 	console.log(`Provider leverage for status ${sms.status} is ${provider_leverage}. History length is ${history.providers[provider.code].length}\n`);
 
-	// await postgres_client.query(`INSERT INTO history (number, providers) VALUES ('${history.number}', '${JSON.stringify(history.providers)}') ON CONFLICT (number) DO UPDATE SET providers = '${JSON.stringify(history.providers)}'`);
-    await redis_client.SET(`history-${number}`, JSON.stringify(history), (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
+	await postgres_client.query(`INSERT INTO history (number, providers) VALUES ('${history.number}', '${JSON.stringify(history.providers)}') ON CONFLICT (number) DO UPDATE SET providers = '${JSON.stringify(history.providers)}'`);
+    // await redis_client.SET(`history-${number}`, JSON.stringify(history), (error, reply) => {
+    //     if (error) console.log(error);
+    //     console.log(reply);
+    // });
 
-    let history_to_postgres = await redis_client.GET(`history-to-postgres`, (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
+    // let history_to_postgres = await redis_client.GET(`history-to-postgres`, (error, reply) => {
+    //     if (error) console.log(error);
+    //     console.log(reply);
+    // });
 
-    if (history_to_postgres == null) history_to_postgres = '';
+    // if (history_to_postgres == null) history_to_postgres = '';
 
-    if ( history_to_postgres == '' || !history_to_postgres.includes(number) )
-        await redis_client.SET(`history-to-postgres`, `${history_to_postgres}${number}~${instance}/`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+    // if ( history_to_postgres == '' || !history_to_postgres.includes(number) )
+    //     await redis_client.SET(`history-to-postgres`, `${history_to_postgres}${number}~${instance}/`, (error, reply) => {
+    //         if (error) console.log(error);
+    //         console.log(reply);
+    //     });
 
     if (!mo) return history;
 
@@ -286,8 +286,6 @@ functions['persist-history'] = async () => {
         if (history_to_postgres == "") break;
 
         let number = history_to_postgres.match(pattern)[0].replace(`~${instance}/`, '');
-        
-        console.log('Trying to persist HISTORY for', number);
         
         history_to_postgres = history_to_postgres.replace(`${number}~${instance}/`, '');
 
@@ -464,10 +462,10 @@ functions['main'] = async () => {
             continue;
         }
 
-        if (counter >= 100) {
-            await functions['persist-history']();
-            counter = 0; continue;
-        }
+        // if (counter >= 100) {
+        //     await functions['persist-history']();
+        //     counter = 0; continue;
+        // }
 
         let sms = await redis_client.LPOP(`sms-ranking-${instance}`, (error, reply) => {
             if (error) console.log(error);
@@ -481,15 +479,15 @@ functions['main'] = async () => {
                 testing_time = false;
             }
 
-            let history_to_postgres = await redis_client.GET(`history-to-postgres`, (error, reply) => {
-                if (error) console.log(error);
-                console.log(reply);
-            });
+            // let history_to_postgres = await redis_client.GET(`history-to-postgres`, (error, reply) => {
+            //     if (error) console.log(error);
+            //     console.log(reply);
+            // });
 
-            if (history_to_postgres != null){
-                await functions['persist-history']();
-                continue;
-            }
+            // if (history_to_postgres != null){
+            //     await functions['persist-history']();
+            //     continue;
+            // }
 
             let mo_to_postgres = await redis_client.GET(`mo-to-postgres`, (error, reply) => {
                 if (error) console.log(error);
