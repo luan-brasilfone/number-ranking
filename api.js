@@ -260,7 +260,7 @@ functions['start-api'] = async () => {
 
 	app.listen(api_port, api_host, () => {});
 
-	setInterval(() => {console.log(`\nSMS Ranking app listening at http://${host}:${port}\n`)}, 30000);
+	setInterval(() => {console.log(`\nSMS Ranking app listening at http://${api_host}:${api_port}\n`)}, 30000);
 }
 
 functions['start-api']();
