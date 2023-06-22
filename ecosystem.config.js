@@ -11,15 +11,21 @@ const database_config = {
     password: env['database_password'],
 }
 
+const redis_config = {
+    host: env['redis_host'],
+    port: env['redis_port']
+}
+
 let ecosystem = new Object();
 ecosystem.apps = [];
 
 let api_autorestart = env['api_autorestart'].toLowerCase();
 
 let api_env = {
-    host: env['api_host'],
-    port: env['api_port'],
-    database_config: database_config
+    api_host: env['api_host'],
+    api_port: env['api_port'],
+    database_config: database_config,
+    redis_config: redis_config
 };
 
 ecosystem.apps.push({
@@ -33,7 +39,8 @@ ecosystem.apps.push({
 let app_autorestart = env['app_autorestart'].toLowerCase();
 
 let app_env = {
-    database_config: database_config
+    database_config: database_config,
+    redis_config: redis_config
 }
 
 for (let i = 1; i <= env['app_instances']; i++) {

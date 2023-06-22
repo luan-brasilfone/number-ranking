@@ -12,15 +12,47 @@ let env = new Object();
 try{
 	env = JSON.parse(process.argv[3]);
 } catch (error) {
-	console.log('\nNo .env file provided. Using default values...');
+	console.log('\nNo .env file provided. Checking if it is set...');
 
-	env.host = 'localhost';
-	env.port = 3000;
+	const fs = require('fs');
+
+	try {
+
+		let env_file = fs.readFileSync('.env', 'utf8');
+
+		const env_lines = env_file.split('\n');
+	
+		for (const line of env_lines) {
+			const trimmed_line = line.trim();
+		
+			if (trimmed_line && !trimmed_line.startsWith('#')) {
+				const [key, value] = trimmed_line.split('=');
+				env[key.toLowerCase()] = value;
+			}
+		}
+
+		env.api_host = env['api_host'];
+		env.api_port = env['api_port'];
+
+		env.redis_config = {
+			host: env['redis_host'],
+			port: env['redis_port']
+		}
+	} catch (error) {
+		console.log('No .env file found. Set one by typing ./set.environment.sh. Using default values...');
+
+		env.api_host = "localhost";
+		env.api_port = 3000;
+
+		env.redis_config = { host: "localhost", port: 6379 }
+	}
 }
 
 const app = express();
-const host = env['host'];
-const port = env['port'];
+const api_host = env['api_host'];
+const api_port = env['api_port'];
+
+const redis_config = env['redis_config'];
 
 let functions = new Object();
 
@@ -177,13 +209,13 @@ functions['redis-scan'] = async (cursor, options, output = {}) => {
 
 functions['connect-to-redis'] = async () => {
 
-    redis_client = redis.createClient();
+    redis_client = redis.createClient({ socket: redis_config });
     
     redis_client.on('error', (error) => {
         console.log(`Error: ${error}`);
     });
 
-    redis_client.connect();
+    redis_client.connect()
 }
 
 functions['start-api'] = async () => {
@@ -226,7 +258,7 @@ functions['start-api'] = async () => {
 		res.status(200).send( `${await functions['delete-provider'](req.params.code)}` );
 	});
 
-	app.listen(port, host, () => {});
+	app.listen(api_port, api_host, () => {});
 
 	setInterval(() => {console.log(`\nSMS Ranking app listening at http://${host}:${port}\n`)}, 30000);
 }

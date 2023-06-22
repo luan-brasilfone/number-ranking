@@ -23,3 +23,9 @@ package-lock.json
 # VISUAL STUDIO CODE
 .vscode
 *.code-workspace
+
+# DOCKER
+Dockerfile
+
+# REST client
+*.rest

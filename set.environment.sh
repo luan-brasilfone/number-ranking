@@ -91,7 +91,7 @@ else
         read -p "Enter database password (default: postgres) = " database_password
     fi; echo
 
-    read -p "Are either Nodejs or Postgresql going to run in a container? (yes/no) (default: no) = " use_containers;
+    read -p "Are either Nodejs, Postgresql or Redis going to run in a container? (yes/no) (default: no) = " use_containers;
     if [ "$use_containers" == "yes" ] || [ "$use_containers" == "y" ]; then
         read -p "Is Postgresql going to run in a container? (yes/no) (default: yes) = " use_postgres_container;
         if [ "$use_postgres_container" != "no" ] && [ "$use_postgres_container" != "n" ]; then
@@ -99,27 +99,44 @@ else
         fi;
         read -p "Is Nodejs going to run in a container? (yes/no) (default: yes) = " use_node_container;
         if [ "$use_node_container" != "no" ] && [ "$use_node_container" != "n" ]; then
-            read -p "Enter Nodejs container name (default: node-container) = " container_node
+            read -p "Enter Nodejs host (default: 0.0.0.0) = " container_node_host
+            read -p "Enter Nodejs port (default: 3000) = " container_node_port
+        fi;
+        read -p "Is Redis going to run in a container? (yes/no) (default: yes) = " use_redis_container;
+        if [ "$use_node_container" != "no" ] && [ "$use_node_container" != "n" ]; then
+            read -p "Enter Redis container name (default: redis-container) = " container_redis
         fi;
 
         if [ "$use_postgres_container" != "no" ] && [ "$use_postgres_container" != "n" ] && [ -z "$container_postgres" ]; then
             container_postgres="postgres-container"
         fi
-        if [ "$use_node_container" != "no" ] && [ "$use_node_container" != "n" ] && [ -z "$container_node" ]; then
-            container_node="node-container"
+        if [ "$use_node_container" != "no" ] && [ "$use_node_container" != "n" ] && [ -z "$container_node_host" ]; then
+            container_node_host="0.0.0.0"
+        fi
+        if [ "$use_node_container" != "no" ] && [ "$use_node_container" != "n" ] && [ -z "$container_node_port" ]; then
+            container_node_port="3000"
+        fi
+        if [ "$use_redis_container" != "no" ] && [ "$use_redis_container" != "n" ] && [ -z "$container_redis" ]; then
+            container_redis="redis-container"
         fi
 
-        if [ -n $container_postgres ] && [ -z "$container_node" ]; then
+        if [ -n "$container_postgres" ] && [ -z "$container_node_host" ]; then
             read -p "Enter Postgresql container port (default: 5432) = " container_postgres_port
             if [ -z "$container_postgres_port" ]; then
                 container_postgres_port=5432
             fi
         fi
+        if [ -n "$container_redis" ] && [ -z "$container_node_host" ]; then
+            read -p "Enter Redis container port (default: 6379) = " container_postgres_port
+            if [ -z "$container_redis_port" ]; then
+                container_redis_port=6379
+            fi
+        fi
 
-        if [ -z "$container_postgres" ] && [ -n "$container_node" ]; then
+        if [ -z "$container_postgres" ] || [ -z "$container_redis" ] && [ -n "$container_node_host" ]; then
             YELLOW='\033[0;33m'
             NC='\033[0m'
-            echo; echo -e "${YELLOW}Running Nodejs in a container and Postgresql on host is not supported. If you run into any error, please consider running both in a container.${NC}"
+            echo; echo -e "${YELLOW}Running Nodejs in a container and Postgresql or Redis on host is not supported. If you run into any error, please consider running all of them in a container.${NC}"
         fi
     fi; echo
 
@@ -169,6 +186,13 @@ else
         database_password="postgres"
     fi
 
+    if [ -z "$redis_host" ]; then
+        redis_host="localhost"
+    fi
+    if [ -z "$redis_port" ]; then
+        redis_port=6379
+    fi
+
     if [ -z "$use_containers" ]; then
         use_containers="no"
     fi
@@ -180,9 +204,29 @@ if [ "$use_containers" == "yes" ] || [ "$use_containers" == "y" ]; then
         database_port="$container_postgres_port"
     fi
 
-    if [ -n "$container_postgres" ] && [ -n "$container_node" ]; then
+    if [ -n "$container_postgres" ] && [ -n "$container_node_host" ]; then
         echo "Setting database host to container name."
         database_host="$container_postgres"
+    fi
+
+    if [ -n "$container_node_host" ]; then
+        echo "Setting API host to container host."
+        api_host="$container_node_host"
+    fi
+
+    if [ -n "$container_node_port" ]; then
+        echo "Setting API port to container port."
+        api_port="$container_node_port"
+    fi
+
+    if [ -n "$container_redis_port" ]; then
+        echo "Setting Redis port to container port."
+        redis_port="$container_redis_port"
+    fi
+
+    if [ -n "$container_redis" ] && [ -n "$container_node_host" ]; then
+        echo "Setting Redis host to container name."
+        redis_host="$container_redis"
     fi
 fi
 
@@ -194,14 +238,20 @@ database_name=$database_name
 database_user=$database_user
 database_password=$database_password
 
+redis_host=$redis_host
+redis_port=$redis_port
+
 app_instances=$app_instances
 api_host=$api_host
 api_port=$api_port
 
 use_containers=$use_containers
-container_node=$container_node
 container_postgres=$container_postgres
 container_postgres_port=$container_postgres_port
+container_node_host=$container_node_host
+container_node_port=$container_node_port
+container_redis=$container_redis
+container_redis_port=$container_redis_port
 
 app_name=$app_name
 app_script=$app_script

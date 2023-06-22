@@ -10,16 +10,54 @@ let env = new Object();
 try{
     env = JSON.parse(process.argv[3]);
 } catch (error) {
-    console.log('\nNo .env file provided. Using default values...\n');
+    console.log('\nNo .env file provided. Checking if it is set...');
 
-    env.database_config = {
-		host: 'localhost',
-		port: 5432,
-		database: 'ranking',
-		user: 'postgres',
-		password: 'postgres'
-	}
+	const fs = require('fs');
+
+	try {
+
+		let env_file = fs.readFileSync('.env', 'utf8');
+
+		const env_lines = env_file.split('\n');
+	
+		for (const line of env_lines) {
+			const trimmed_line = line.trim();
+		
+			if (trimmed_line && !trimmed_line.startsWith('#')) {
+				const [key, value] = trimmed_line.split('=');
+				env[key.toLowerCase()] = value;
+			}
+		}
+
+        env.database_config = {
+            host: env['database_host'],
+            port: env['database_port'],
+            database: env['database_name'],
+            user: env['database_user'],
+            password: env['database_password']
+        }
+
+        env.redis_config = {
+			host: env['redis_host'],
+			port: env['redis_port']
+		}
+	} catch (error) {
+		console.log('No .env file found. Set one by typing ./set.environment.sh. Using default values...');
+
+        env.database_config = {
+            host: 'localhost',
+            port: 5432,
+            database: 'ranking',
+            user: 'postgres',
+            password: 'postgres'
+        }
+
+		env.redis_config = { host: "localhost", port: 6379 }
+    }
 }
+
+const database_config = env['database_config'];
+const redis_config = env['redis_config'];
 
 let functions = new Object();
 
@@ -353,7 +391,7 @@ functions['persist-mo'] = async () => {
 
 functions['connect-to-postgres'] = async () => {
 
-    postgres_client = new pg.Client(env['database_config']);
+    postgres_client = new pg.Client(database_config);
     postgres_client.connect(function (err) {
         if (err) {
             // settings.consoleLog(`=> [connection: ERROR, message: ${err.message}]`);
@@ -367,7 +405,7 @@ functions['connect-to-postgres'] = async () => {
 
 functions['connect-to-redis'] = async () => {
 
-    redis_client = redis.createClient();
+    redis_client = redis.createClient({ socket: redis_config });
     
     redis_client.on('error', (error) => {
         console.log(`Error: ${error}`);
