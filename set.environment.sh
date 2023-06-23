@@ -4,9 +4,12 @@ if [ "$1" == "--create-database" ]; then
 
     source .env
 
-    table_history='CREATE TABLE IF NOT EXISTS "history" ("number" VARCHAR(20) PRIMARY KEY, "providers" JSONB);'
+    table_history='CREATE TABLE IF NOT EXISTS "history" ("number_provider" VARCHAR(40) PRIMARY KEY, "sms" JSONB);'
     table_mo='CREATE TABLE IF NOT EXISTS "mo" ("number" VARCHAR(20) PRIMARY KEY, "balance" INT, "date" DATE);'
     table_providers='CREATE TABLE IF NOT EXISTS "providers" ("code" VARCHAR(20) PRIMARY KEY, "MO" INT, "200" INT, "404" INT, "500" INT, "503" INT, "default" INT);'
+    #table_cursor='CREATE TABLE IF NOT EXISTS "cursor" ("number_provider" VARCHAR(40) PRIMARY KEY, "counter" INT, "statement" VARCHAR(20));'
+    #table_rank='CREATE TABLE IF NOT EXISTS "rank" ("number" VARCHAR(20) PRIMARY KEY, "total" INT, "sms_counter" INT);'
+    
 
     command_drop="PGPASSWORD=$database_password dropdb $database_name -U $database_user -h $database_host -p $database_port --if-exists"
     command_create="PGPASSWORD=$database_password createdb $database_name -U $database_user -h $database_host -p $database_port -e"
@@ -14,6 +17,8 @@ if [ "$1" == "--create-database" ]; then
     command_history="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_history'"
     command_mo="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_mo'"
     command_providers="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_providers'"
+    #command_cursor="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_cursor'"
+    #command_rank="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_rank'"
 
     if [ "$use_containers" == "yes" ] || [ "$use_containers" == "y" ]; then
 
@@ -29,6 +34,8 @@ if [ "$1" == "--create-database" ]; then
         docker exec $container_postgres sh -c "$command_history"
         docker exec $container_postgres sh -c "$command_mo"
         docker exec $container_postgres sh -c "$command_providers"
+        #docker exec $container_postgres sh -c "$command_cursor"
+        #docker exec $container_postgres sh -c "$command_rank"
 
         exit 0
     fi
@@ -45,6 +52,8 @@ if [ "$1" == "--create-database" ]; then
     eval $command_history
     eval $command_mo
     eval $command_providers
+    #eval $command_cursor
+    #eval $command_rank
 
     exit 0
 fi

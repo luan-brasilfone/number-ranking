@@ -29,6 +29,8 @@ try{
 			}
 		}
 
+        env.app_base_dir = env['app_base_dir'];
+
         env.database_config = {
             host: env['database_host'],
             port: env['database_port'],
@@ -43,6 +45,8 @@ try{
 		}
 	} catch (error) {
 		console.log('No .env file found. Set one by typing ./set.environment.sh. Using default values...');
+
+        env.app_base_dir = './';
 
         env.database_config = {
             host: 'localhost',
@@ -89,16 +93,15 @@ functions['redis-scan'] = async (cursor, options, output = {}) => {
 	});
 
 	const promises = scan.keys.map(async key => {
-		let row = await redis_client.GET(key, (error, reply) => {
+		await redis_client.DEL(key, (error, reply) => {
 			if (error) console.log(error);
 			console.log(reply);
 		});
-		output[key] = row;
 	});
 
 	await Promise.all(promises);
 
-	if (scan.cursor != 0) functions['redis-scan'](scan.cursor, options, output);
+	if (scan.cursor != 0) await functions['redis-scan'](scan.cursor, options, output);
 
 	return output;
 }
@@ -106,6 +109,48 @@ functions['redis-scan'] = async (cursor, options, output = {}) => {
 functions['rank-number'] = (number_average, provider_leverage, sms) => {
 
     if (sms.status == '200'){
+
+        let leverage = (100 - provider_leverage) / 100;
+        let rank = 50 + Math.round(number_average * (2 + leverage));
+
+        if (rank > 100) rank = 100;
+        return rank;
+    }
+
+    let leverage = provider_leverage / 2;
+    leverage = (100 - leverage) / 100;
+
+    let rank = Math.round(number_average * leverage);
+
+    return rank;
+}
+
+functions['rank-number-flash'] = (total, sms_counter, provider_leverage, sms, has_mo) => {
+
+    if (has_mo) return `${parseInt(total) + 100}/${parseInt(sms_counter) + 1}`;
+
+    let number_average = total / sms_counter;
+
+    if (sms.status == '200'){
+
+        let leverage = (100 - provider_leverage) / 100;
+        let rank = 50 + Math.round(number_average * (2 + leverage));
+
+        if (rank > 100) rank = 100;
+        return `${parseInt(total) + rank}/${parseInt(sms_counter) + 1}`;
+    }
+
+    let leverage = provider_leverage / 2;
+    leverage = (100 - leverage) / 100;
+
+    let rank = Math.round(number_average * leverage);
+
+    return `${parseInt(total) + rank}/${parseInt(sms_counter) + 1}`;
+}
+
+function rankNumberLite (number_average, provider_leverage, status) {
+
+    if (status == '200'){
 
         let leverage = (100 - provider_leverage) / 100;
         let rank = 50 + Math.round(number_average * (2 + leverage));
@@ -250,18 +295,323 @@ functions['rank-sms'] = async (sms) => {
     return history;
 }
 
-functions['get-rank'] = (history) => {
+functions['rank-sms-flash'] = async (sms) => {
 
-    let number_average = 0, provider_total = 0;
+    console.log(`\nRanking SMS for ${sms.numero} on ${sms.fornecedor} - FLASH MODE`);
 
-    Object.values(history.providers).forEach(provider_entry => {
-        provider_entry.forEach(sms_entry => {
-            number_average += sms_entry.peso;
-        });
-        provider_total += provider_entry.length;
+	let provider = await redis_client.GET(`provider-${sms.fornecedor}`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
     });
 
-    return Math.round(number_average / provider_total);
+    provider = JSON.parse(provider);
+    
+    if (provider === null) return;
+
+	let provider_leverage = provider[sms.status.toLowerCase()];
+
+	let rank = `${provider_leverage}/1`;
+
+    let has_mo = false;
+
+    let mo = await redis_client.GET(`mo-${sms.numero}`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+    
+    if (mo == null && sms.status.toLowerCase() == 'mo') mo = 1001;
+    
+	if (mo != null) {
+        console.log(`MO found for ${sms.numero}`)
+		has_mo = true;
+		mo--;
+
+        if (mo <= 0){
+            
+            await redis_client.DEL(`mo-${sms.numero}`, (error, reply) => {
+                if (error) console.log(error);
+                console.log(reply);
+            });
+            mo = false;
+        }
+	}
+
+    let history = new Object();
+    let cursor = await redis_client.GET(`cursor-${sms.numero}_${sms.fornecedor}`, (error, reply) => {
+         if (error) console.log(error);
+        console.log(reply);
+    });
+
+    if (cursor != null && !has_mo){
+    
+        cursor = JSON.parse(cursor);
+        
+        rank = await redis_client.GET(`rank-${sms.numero}`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+
+		rank = functions['rank-number-flash'](rank.split('/')[0], rank.split('/')[1], provider_leverage, sms, has_mo);
+	}
+
+    if (cursor == null )
+        cursor = {"counter": 1, "statement": "insert"};
+    
+    let length = cursor.counter;
+    if (cursor.statement == "update") length = 10;
+	
+	console.log(`Provider leverage for status ${sms.status} is ${provider_leverage}. History length is ${length}\n`);
+
+    history = {
+        "cursor": cursor.counter,
+        "statement": cursor.statement,
+        "sms": sms
+    };
+
+    let total = rank.split('/')[0], sms_counter = rank.split('/')[1];
+
+    sms.peso = total/sms_counter;
+	sms.pesoFornecedor = provider_leverage;
+
+    if (has_mo) sms.peso = 100;
+
+    console.log('total', total);
+    console.log('sms_counter', sms_counter);
+    if (cursor.statement == "insert"){
+
+        await redis_client.SET(`rank-${sms.numero}`, `${total}/${sms_counter}`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+    }
+
+    if (cursor.statement == "update"){
+        let old_leverage = await postgres_client.query(`SELECT sms FROM history WHERE cursor = '${history.cursor - 1}' AND number = '${sms.numero}' AND provider = '${provider}'`);
+
+        total -= old_leverage.rows[0].sms.peso;
+
+        await redis_client.ZADD(`rank-${sms.numero}`, `${total}/${sms_counter}`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+    }      
+
+    cursor.counter++;
+    if (cursor.counter > 10) cursor.counter = 1, cursor.statement = "update";
+
+    await redis_client.RPUSH(`history-to-postgres`, JSON.stringify(history), (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+
+    await redis_client.SET(`cursor-${sms.numero}_${sms.fornecedor}`, JSON.stringify(cursor), (error, reply) => {
+        if (error) console.log(error);
+       console.log(reply);
+    });
+
+    if (!mo) return history;
+
+    await redis_client.SET(`mo-${sms.numero}`, mo, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+
+    let mo_to_postgres = await redis_client.GET(`mo-to-postgres`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+
+    if (mo_to_postgres == null) mo_to_postgres = '';
+
+    if ( mo_to_postgres == '' || !mo_to_postgres.includes(sms.numero) )
+        await redis_client.SET(`mo-to-postgres`, `${mo_to_postgres}${sms.numero}~${instance}/`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+
+    return history;
+}
+
+async function rankSmsLite (sms) {
+
+    console.log(`\nRanking SMS for ${sms.numero} on ${sms.fornecedor} - LITE MODE`);
+
+    let provider = await redis_client.GET(`provider-${sms.fornecedor}`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+
+    if (provider === null) return;
+    
+    provider = JSON.parse(provider);
+    
+    let provider_leverage = provider[sms.status.toLowerCase()];
+
+	let rank = provider_leverage;
+
+    let has_mo = false;
+
+    let mo = await redis_client.GET(`mo-${sms.numero}`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+    
+    if (mo == null && sms.status.toLowerCase() == 'mo') mo = 1001;
+    
+	if (mo != null) {
+        console.log(`MO found for ${sms.numero}`)
+		has_mo = true;
+		mo--;
+
+        if (mo <= 0){
+            
+            await redis_client.DEL(`mo-${sms.numero}`, (error, reply) => {
+                if (error) console.log(error);
+                console.log(reply);
+            });
+            mo = false;
+        }
+	}
+
+    let cursor = await redis_client.GET(`cursor-${sms.numero}`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+
+    cursor = JSON.parse(cursor);
+
+    if (cursor != null && !has_mo){
+    
+		let number_average = cursor.total / cursor.sms_counter;
+
+        rank = rankNumberLite(number_average, provider_leverage, sms.status);
+	}
+
+    sms.peso = rank, sms.pesoFornecedor = provider_leverage;
+
+    if (cursor == null ) cursor = {"total": 0, "sms_counter": 0};
+    if (cursor[sms.fornecedor] == undefined) cursor[sms.fornecedor] = {"total": 0, "statement": "insert"};
+
+    if (has_mo) sms.peso = 100;
+    
+    try {
+
+        if (cursor[sms.fornecedor].statement == "update"){
+
+            let old_leverage = await postgres_client.query(`SELECT sms FROM history WHERE number_provider = '${sms.numero}_${sms.fornecedor}_${cursor[sms.fornecedor]}'`);
+        }
+
+        console.log(`Provider leverage for status ${sms.status} is ${provider_leverage}. History length is ${cursor[sms.fornecedor].total}\n`);
+
+        await postgres_client.query(`INSERT INTO history (number_provider, sms) VALUES ('${sms.numero}_${sms.fornecedor}_${cursor[sms.fornecedor].total}', '${JSON.stringify(sms)}') ON CONFLICT (number_provider) DO UPDATE SET sms = '${JSON.stringify(sms)}'`);
+
+        try{
+            
+            cursor.total + sms.peso, cursor[sms.fornecedor].total++;
+            
+            if (cursor[sms.fornecedor].statement == "insert") cursor.sms_counter++;
+
+            if (cursor[sms.fornecedor].total > 10)
+                cursor[sms.fornecedor].total = 1, cursor[sms.fornecedor].statement = "update";            
+
+            await redis_client.SET(`cursor-${sms.numero}`, JSON.stringify(cursor), (error, reply) => {
+                if (error) console.log(error);
+                console.log(reply);
+            });
+        }
+        catch (error){
+            console.log(`Could not update cursor for ${sms.numero} on ${sms.fornecedor}... Re-syncing...`);
+            console.error(error);
+
+            await reSyncCursor(sms.numero, sms.fornecedor);
+
+            // await redis_client.RPUSH(`sms-to-rank`, JSON.stringify(sms), (error, reply) => {
+            //     if (error) console.log(error);
+            //     console.log(reply);
+            // });
+        }
+    }
+    catch (error) {
+        console.log(`Could not insert history for ${sms.numero} on ${sms.fornecedor}... Skipping...`);
+        console.error(error);
+        console.error({sms: sms, cursor: cursor, provider: cursor[sms.numero], rank: rank, mo: mo})
+
+        delete sms.peso, delete sms.pesoFornecedor;
+
+        await redis_client.RPUSH(`sms-ranking-${instance}`, JSON.stringify(sms), (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+    }
+
+    if (!mo) return rank;
+
+    try {
+
+        await redis_client.SET(`mo-${sms.numero}`, mo, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+    
+        let mo_to_postgres = await redis_client.GET(`mo-to-postgres`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+    
+        if (mo_to_postgres == null) mo_to_postgres = '';
+    
+        if ( mo_to_postgres == '' || !mo_to_postgres.includes(sms.numero) )
+            await redis_client.SET(`mo-to-postgres`, `${mo_to_postgres}${sms.numero}~${instance}/`, (error, reply) => {
+                if (error) console.log(error);
+                console.log(reply);
+            });
+    }
+    catch (error) {
+
+        console.log(`Could not save MO for ${sms.numero}... Skipping...`);
+        console.error(error);
+    }
+    
+    return rank;
+}
+
+async function reSyncCursor (number, provider) {
+
+    try {
+
+        let history = await postgres_client.query(`SELECT * FROM history WHERE number_provider LIKE '${sms.numero}_${sms.fornecedor}'`);
+
+        cursor = {total: 0, sms_counter: 0};
+        
+        if (history.rows.length > 0) history.rows.forEach((sms_entry) => {
+
+            if (cursor[provider] == undefined) cursor[provider] = 0;
+
+            cursor.total += sms_entry.sms.peso, cursor.sms_counter++;
+            cursor[provider]++;
+        });
+
+        await redis_client.SET(`cursor-${sms.numero}`, JSON.stringify(cursor), (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+    }
+    catch (error) {
+        console.log(`Could not re-sync cursor for ${number} on ${provider}... Re-triying...`);
+        console.error(error);
+
+        await reSyncCursor(number, provider);
+    }
+}
+
+functions['get-rank'] = async (history) => {
+
+    let rank = await redis_client.GET(`rank-${history.sms.numero}`, (error, reply) => {
+        if (error) console.log(error);
+        console.log(reply);
+    });
+
+    return rank;
 }
 
 functions['persist-providers'] = async () => {
@@ -352,6 +702,45 @@ functions['persist-history'] = async () => {
     });
 }
 
+functions['persist-history-flash'] = async () => {
+
+    while (true) {
+
+        let history_to_postgres = await redis_client.LPOP(`history-to-postgres`, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });    
+
+        if (history_to_postgres == null) return;
+
+        history_to_postgres = JSON.parse(history_to_postgres);
+        let number = history_to_postgres.sms.numero, provider = history_to_postgres.sms.fornecedor;
+        let rank = await functions['get-rank'](history_to_postgres);
+
+        let total = rank.split('/')[0], sms_counter = rank.split('/')[1];
+
+        console.log(`Inserting history for ${number} on instance ${instance}`);
+
+        if (history_to_postgres.statement == "insert"){
+
+            await postgres_client.query(`INSERT INTO history (cursor, number, provider, sms) VALUES ('${history_to_postgres.cursor}', '${number}', '${provider}', '${JSON.stringify(history_to_postgres.sms)}')`);
+        }
+        
+        if (history_to_postgres.statement == "update"){
+            
+            await postgres_client.query(`UPDATE history SET sms = '${JSON.stringify(history_to_postgres.sms)}' WHERE cursor = '${history_to_postgres.cursor}' AND number = '${number}' AND provider = '${provider}'`);
+        }
+
+        await postgres_client.query(`INSERT INTO cursor (number_provider, counter, statement) VALUES ('${number}_${provider}', '${history_to_postgres.cursor}', '${history_to_postgres.statement}') ON CONFLICT (number_provider) DO UPDATE SET counter = '${history_to_postgres.cursor}', statement = '${history_to_postgres.statement}'`);
+        
+        await postgres_client.query(`INSERT INTO rank (number, total, sms_counter) VALUES ('${number}', '${total}', '${sms_counter}') ON CONFLICT (number) DO UPDATE SET total = '${total}', sms_counter = '${sms_counter}'`);
+    }
+}
+
+async function persistHistoryLite () {
+
+}
+
 functions['persist-mo'] = async () => {
     
     let mo_to_postgres = await redis_client.GET(`mo-to-postgres`, (error, reply) => {
@@ -414,12 +803,13 @@ functions['connect-to-redis'] = async () => {
     redis_client.connect();
 }
 
-functions['main'] = async () => {
-    
-    await functions['connect-to-postgres']();
-    await functions['connect-to-redis']();
+async function startApp () {
 
-    let providers = await functions['redis-scan'](0, {MATCH: 'provider-*'});
+    console.log(`\nLoading app on instance ${instance}...`);
+
+    // DELETE
+
+    let providers = await functions['redis-scan'](0, {MATCH: 'provider-*', COUNT: 1000});
 
     Object.keys(providers).forEach(key => {
         redis_client.DEL(key, (error, reply) => {
@@ -427,7 +817,33 @@ functions['main'] = async () => {
             console.log(reply);
         });
     });
-    
+
+    delete providers;
+
+    let mos = await functions['redis-scan'](0, {MATCH: 'mo-*', COUNT: 1000});
+
+    Object.keys(mos).forEach(key => {
+        redis_client.DEL(key, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+    });
+
+    delete mos;
+
+    let cursors = await functions['redis-scan'](0, {MATCH: 'cursor-*', COUNT: 1000});
+
+    Object.keys(cursors).forEach(key => {
+        redis_client.DEL(key, (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+    });
+
+    delete cursors;
+
+    // SET
+
     let providers_wrapper = await postgres_client.query('SELECT * FROM providers');
     
     if (providers_wrapper.rows.length > 0) providers_wrapper.rows.forEach((provider) => {
@@ -446,17 +862,8 @@ functions['main'] = async () => {
         });
     });
 
-    delete providers_wrapper
+    delete providers_wrapper;
 
-    let mos = await functions['redis-scan'](0, {MATCH: 'mo-*', COUNT: 1000});
-
-    Object.keys(mos).forEach(key => {
-        redis_client.DEL(key, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
-    });
-    
     let mos_wrapper = await postgres_client.query('SELECT * FROM mo');
 
     if (mos_wrapper.rows.length > 0) mos_wrapper.rows.forEach((mo) => {
@@ -469,6 +876,73 @@ functions['main'] = async () => {
         });
     });
 
+    delete mos_wrapper;
+
+    let history = await postgres_client.query('SELECT * FROM history');
+
+    cursors = new Object();
+    
+    if (history.rows.length > 0) history.rows.forEach((sms_entry) => {
+        let number = sms_entry.number_provider.split('_')[0];
+        let provider = sms_entry.number_provider.split('_')[1];
+
+        if (cursors[number] == undefined) cursors[number] = {total: 0, sms_counter: 0};
+        if (cursors[number][provider] == undefined) cursors[number][provider] = {total: 0, statement: "insert"};
+
+        cursors[number].total += sms_entry.sms.peso, cursors[number].sms_counter++;
+        cursors[number][provider]++;
+    });
+
+    Object.keys(cursors).forEach(number => {
+        redis_client.SET(`cursor-${number}`, JSON.stringify(cursors[number]), (error, reply) => {
+            if (error) console.log(error);
+            console.log(reply);
+        });
+
+        delete cursors[number];
+    });
+
+    delete cursors, history;
+
+    // let cursors_wrapper = await postgres_client.query('SELECT * FROM cursor');
+
+    // if (cursors_wrapper.rows.length > 0) cursors_wrapper.rows.forEach((cursor) => {
+    //     let number_provider = cursor.number_provider;
+    //     delete cursor.number_provider;
+
+    //     redis_client.SET(`cursor-${number_provider}`, JSON.stringify(cursor), (error, reply) => {
+    //         if (error) console.log(error);
+    //         console.log(reply);
+    //     });
+    // });
+
+    // delete cursors_wrapper;
+
+    // let ranks = await functions['redis-scan'](0, {MATCH: 'rank-*', COUNT: 1000});
+
+    // Object.keys(ranks).forEach(key => {
+    //     redis_client.DEL(key, (error, reply) => {
+    //         if (error) console.log(error);
+    //         console.log(reply);
+    //     });
+    // });
+
+    // delete ranks;
+    
+    // let ranks_wrapper = await postgres_client.query('SELECT * FROM rank');
+
+    // if (ranks_wrapper.rows.length > 0) ranks_wrapper.rows.forEach((rank) => {
+    //     let number = rank.number;
+    //     delete rank.number;
+
+    //     redis_client.SET(`rank-${number}`, `${rank.total}/${rank.sms_counter}`, (error, reply) => {
+    //         if (error) console.log(error);
+    //         console.log(reply);
+    //     });
+    // });
+
+    // delete ranks_wrapper;
+
     // let histories = await functions['redis-scan'](0, {MATCH: 'history-*', COUNT: 1000});
 
     // console.log(histories);
@@ -479,6 +953,18 @@ functions['main'] = async () => {
     //         console.log(reply);
     //     });
     // });
+
+    // return;
+}
+
+functions['main'] = async () => {
+    
+    await functions['connect-to-postgres']();
+    await functions['connect-to-redis']();
+
+    console.time('Load time');
+    await startApp();
+    console.timeEnd('Load time');
 
     // return;
 
@@ -500,11 +986,6 @@ functions['main'] = async () => {
             continue;
         }
 
-        // if (counter >= 100) {
-        //     await functions['persist-history']();
-        //     counter = 0; continue;
-        // }
-
         let sms = await redis_client.LPOP(`sms-ranking-${instance}`, (error, reply) => {
             if (error) console.log(error);
             console.log(reply);
@@ -517,13 +998,13 @@ functions['main'] = async () => {
                 testing_time = false;
             }
 
-            // let history_to_postgres = await redis_client.GET(`history-to-postgres`, (error, reply) => {
+            // let history_to_postgres = await redis_client.LLEN(`history-to-postgres`, (error, reply) => {
             //     if (error) console.log(error);
             //     console.log(reply);
             // });
-
-            // if (history_to_postgres != null){
-            //     await functions['persist-history']();
+    
+            // if (history_to_postgres > 0) {
+            //     await functions['persist-history-lite']();
             //     continue;
             // }
 
@@ -537,26 +1018,17 @@ functions['main'] = async () => {
                 continue;
             }
             
-            await functions['sleep'](10000).then(() => {});
+            await functions['sleep'](3000).then(() => {});
             continue;
         }
     
         sms = JSON.parse(sms);
-        let number = sms.numero
     
-        let history = await functions['rank-sms'](sms);
+        let history = await rankSmsLite(sms);
         if (history == undefined) {
             console.log(`Provider ${sms.fornecedor} not found. Skipping...`);
             continue;
         }
-
-        let rank = functions['get-rank'](history);
-        
-        // console.log(rank, sms.numero)
-        await redis_client.ZADD('rank', {"score": rank, "value": number}, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
 
         counter++;
     }

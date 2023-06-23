@@ -1,6 +1,6 @@
 const fs = require('fs');
 
-const env_path = '.env';
+const env_path = '/home/luan/Documents/NumberRanking/node/.env';
 const env = getEnv();
 
 const database_config = {
@@ -30,15 +30,16 @@ let api_env = {
 
 ecosystem.apps.push({
     name: env['api_name'],
-    script: env['api_script'],
+    script: `${env['app_base_dir']}/${env['api_script']}`,
     autorestart: (api_autorestart != 'no' && api_autorestart != 'n'),
-    // watch: true,
+    watch: true,
     args: `${env['app_instances']} '${JSON.stringify(api_env)}'`,
 });
 
 let app_autorestart = env['app_autorestart'].toLowerCase();
 
 let app_env = {
+    app_base_dir: env['app_base_dir'],
     database_config: database_config,
     redis_config: redis_config
 }
@@ -46,9 +47,9 @@ let app_env = {
 for (let i = 1; i <= env['app_instances']; i++) {
     ecosystem.apps.push({
         name: `${env['app_name']}-${i}`,
-        script: env['app_script'],
+        script: `${env['app_base_dir']}/${env['app_script']}`,
         autorestart: (app_autorestart != 'no' && app_autorestart != 'n'),
-        // watch: true,
+        watch: true,
         args: `${i} '${JSON.stringify(app_env)}'`,
     });
 }
