@@ -6,7 +6,10 @@ if [ "$1" == "--create-database" ]; then
 
     table_history='CREATE TABLE IF NOT EXISTS "history" ("number_provider" VARCHAR(40) PRIMARY KEY, "sms" JSONB);'
     table_mo='CREATE TABLE IF NOT EXISTS "mo" ("number" VARCHAR(20) PRIMARY KEY, "balance" INT, "date" DATE);'
-    table_providers='CREATE TABLE IF NOT EXISTS "providers" ("code" VARCHAR(20) PRIMARY KEY, "MO" INT, "200" INT, "404" INT, "500" INT, "503" INT, "default" INT);'
+    table_provider='CREATE TABLE IF NOT EXISTS "provider" ("code" VARCHAR(20) PRIMARY KEY, "MO" INT, "s200" INT, "s404" INT, "s500" INT, "s503" INT, "default" INT);'
+    table_log_mo='CREATE TABLE IF NOT EXISTS "log_mo" ("id" SERIAL PRIMARY KEY, "number" VARCHAR(20), "date" TIMESTAMP, "provider" VARCHAR(20), "status" VARCHAR(20), "message" TEXT);'
+    table_log_provider='CREATE TABLE IF NOT EXISTS "log_provider" ("id" SERIAL PRIMARY KEY, "code" VARCHAR(20), "date" TIMESTAMP, "status" VARCHAR(20), "message" TEXT);'
+    table_log_history='CREATE TABLE IF NOT EXISTS "log_history" ("id" SERIAL PRIMARY KEY, "number" VARCHAR(20), "provider" VARCHAR(20), "date" TIMESTAMP, "status" VARCHAR(20), "message" TEXT);'
     #table_cursor='CREATE TABLE IF NOT EXISTS "cursor" ("number_provider" VARCHAR(40) PRIMARY KEY, "counter" INT, "statement" VARCHAR(20));'
     #table_rank='CREATE TABLE IF NOT EXISTS "rank" ("number" VARCHAR(20) PRIMARY KEY, "total" INT, "sms_counter" INT);'
     
@@ -16,7 +19,10 @@ if [ "$1" == "--create-database" ]; then
 
     command_history="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_history'"
     command_mo="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_mo'"
-    command_providers="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_providers'"
+    command_provider="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_provider'"
+    command_log_mo="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_log_mo'"
+    command_log_provider="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_log_provider'"
+    command_log_history="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_log_history'"
     #command_cursor="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_cursor'"
     #command_rank="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c '$table_rank'"
 
@@ -33,7 +39,10 @@ if [ "$1" == "--create-database" ]; then
 
         docker exec $container_postgres sh -c "$command_history"
         docker exec $container_postgres sh -c "$command_mo"
-        docker exec $container_postgres sh -c "$command_providers"
+        docker exec $container_postgres sh -c "$command_provider"
+        docker exec $container_postgres sh -c "$command_log_mo"
+        docker exec $container_postgres sh -c "$command_log_provider"
+        docker exec $container_postgres sh -c "$command_log_history"
         #docker exec $container_postgres sh -c "$command_cursor"
         #docker exec $container_postgres sh -c "$command_rank"
 
@@ -51,7 +60,10 @@ if [ "$1" == "--create-database" ]; then
 
     eval $command_history
     eval $command_mo
-    eval $command_providers
+    eval $command_provider
+    eval $command_log_mo
+    eval $command_log_provider
+    eval $command_log_history
     #eval $command_cursor
     #eval $command_rank
 
@@ -62,7 +74,7 @@ if [ "$1" == "--add-example-provider" ]; then
 
     source .env
 
-    insert_provider='INSERT INTO providers (code, \"MO\", \"200\", \"404\", \"500\", \"503\", \"default\") VALUES ('\'example\'', 100, 100, 30, 40, 50, 50)'
+    insert_provider='INSERT INTO provider (code, \"MO\", \"200\", \"404\", \"500\", \"503\", \"default\") VALUES ('\'example\'', 100, 100, 30, 40, 50, 50)'
     command_insert="PGPASSWORD=$database_password psql -d $database_name -U $database_user -h $database_host -p $database_port -c "\"$insert_provider\"""
 
     if [ "$use_containers" == "yes" ] || [ "$use_containers" == "y" ]; then

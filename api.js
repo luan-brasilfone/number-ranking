@@ -54,6 +54,8 @@ const api_port = env['api_port'];
 
 const redis_config = env['redis_config'];
 
+let counter = 0;
+
 let functions = new Object();
 
 functions['get-zscore'] = async (number = false) => {
@@ -86,14 +88,20 @@ functions['rpush-sms'] = async (sms) => {
 		console.log(reply);
 	});
 
-	console.log(`Added sms to rank ${sms.numero} on instance ${instance}`);
+	counter++;
 }
 
 functions['get-providers'] = async (code) => {
 
 	if (code == undefined){
 		console.log(`Getting providers`);
-		let providers = await functions['redis-scan'](0, {MATCH: 'provider-*'});
+		let providers = await functions['redis-scan'](0, {MATCH: 'provider-*', COUNT: '1000'});
+
+		Object.keys(providers).forEach(key => {
+			providers[key.replace('provider-', '')] = providers[key];
+			delete providers[key];
+		});
+
 		return JSON.stringify(providers);
 	}
 	
@@ -105,7 +113,7 @@ functions['get-providers'] = async (code) => {
 
 	if (provider == null) return 'No provider found';
 
-	return await provider;
+	return JSON.stringify(await provider);
 }
 
 functions['save-provider'] = async (body, method) => {
@@ -113,10 +121,10 @@ functions['save-provider'] = async (body, method) => {
 	let fields = {
 		"code": {required: true, type: 'string'},
 		"mo": {required: false, type: 'int', default: 100},
-		"200": {required: false, type: 'int', default: 100},
-		"404": {required: true, type: 'int'},
-		"500": {required: true, type: 'int'},
-		"503": {required: true, type: 'int'},
+		"s200": {required: false, type: 'int', default: 100},
+		"s404": {required: true, type: 'int'},
+		"s500": {required: true, type: 'int'},
+		"s503": {required: true, type: 'int'},
 		"default": {required: false, type: 'int', default: 50},
 	};
 
@@ -127,24 +135,28 @@ functions['save-provider'] = async (body, method) => {
 	let row = {};
 	
 	for (let field in fields) {
-
-		if ( (_.isUndefined(body[field]) || _.isEmpty(body[field].toString())) && fields[field].required)
-			return `Field ${field} is required`;
-			
-		if (_.isUndefined(body[field])) body[field] = fields[field].default;
+		if ( (_.isUndefined(body[field]) || _.isNull(body[field]) || _.isEmpty(body[field].toString())) && fields[field].required )
+			return JSON.stringify({message: `Field ${field} is required`});
+		
+		if (_.isUndefined(body[field]) || _.isNull(body[field])) body[field] = fields[field].default;
 		
 		if (fields[field].type == 'string') { row[field] = body[field]; continue; }
 
-		if (!Number.isInteger(body[field])) return `Field ${field} must be an integer`;
-		if (body[field] < 0 || body[field] > 100) return `Field ${field} must be between 0 and 100`;
+		if (!Number.isInteger(body[field]))
+			return JSON.stringify({message: `Field ${field} must be an integer`});
+
+		if (body[field] < 0 || body[field] > 100)
+			return JSON.stringify({message: `Field ${field} must be between 0 and 100`});
 
 		row[field] = body[field];
 	}
 
-	let providers = await functions['redis-scan'](0, {MATCH: 'provider-*'});
+	let providers = await functions['redis-scan'](0, {MATCH: 'provider-*', COUNT: '1000'});
 
-	if (providers != null && providers[`provider-${body.code}`] != undefined && method == 'POST') return 'Provider code is already registered';
-	if (providers != null && providers[`provider-${body.code}`] == undefined && method == 'PUT') return 'Provider code is not registered';
+	if (providers != null && providers[`provider-${body.code}`] != undefined && method == 'POST')
+		return JSON.stringify({message: 'Provider code is already registered'});
+	if (providers != null && providers[`provider-${body.code}`] == undefined && method == 'PUT')
+		return JSON.stringify({message: 'Provider code is not registered'});
 
 	if (providers == null) providers = new Object();
 
@@ -158,19 +170,19 @@ functions['save-provider'] = async (body, method) => {
 		console.log(reply);
 	});
 
-	return 'Provider saved';
+	return JSON.stringify({message: 'Provider saved', success: true});
 }
 
 functions['delete-provider'] = async (code) => {
 
-	if (code == undefined) return 'No code provided';
+	if (code == undefined) return JSON.stringify({message: 'No code provided'});
 
 	let provider = await redis_client.GET(`provider-${code}`, (error, reply) => {
 		if (error) console.log(error);
 		console.log(reply);
 	});
 
-	if (provider == null) return 'No provider found';
+	if (provider == null) return JSON.stringify({message: 'No record found'});
 
 	redis_client.DEL(`provider-${code}`, (error, reply) => {
 		if (error) console.log(error);
@@ -182,7 +194,17 @@ functions['delete-provider'] = async (code) => {
 		console.log(reply);
 	});
 
-	return 'Provider deleted';
+	return JSON.stringify({message: 'Provider deleted', success: true});
+}
+
+functions['get-dashboard'] = async () => {
+
+	let dashboard = await redis_client.GET('dashboard', (error, reply) => {
+		if (error) console.log(error);
+		console.log(reply);
+	});
+
+	return dashboard;
 }
 
 functions['redis-scan'] = async (cursor, options, output = {}) => {
@@ -202,7 +224,7 @@ functions['redis-scan'] = async (cursor, options, output = {}) => {
 
 	await Promise.all(promises);
 
-	if (scan.cursor != 0) functions['redis-scan'](scan.cursor, options, output);
+	if (scan.cursor != 0) await functions['redis-scan'](scan.cursor, options, output);
 
 	return output;
 }
@@ -258,9 +280,19 @@ functions['start-api'] = async () => {
 		res.status(200).send( `${await functions['delete-provider'](req.params.code)}` );
 	});
 
+	// Interface
+
+	app.get('/dashboard', async (req, res) => {
+
+		res.status(200).send(`${await functions['get-dashboard']()}`);
+	});
+
 	app.listen(api_port, api_host, () => {});
 
-	setInterval(() => {console.log(`\nSMS Ranking app listening at http://${api_host}:${api_port}\n`)}, 30000);
+	setInterval(() => {
+		console.log(`Added ${counter} SMS to rank on the last minute. Listening at http://${api_host}:${api_port}`);
+		counter = 0;
+	}, 60000);
 }
 
 functions['start-api']();

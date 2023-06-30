@@ -19,6 +19,7 @@ package-lock.json
 
 # ENVIRONMENT
 .env
+query
 
 # VISUAL STUDIO CODE
 .vscode
