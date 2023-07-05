@@ -9,7 +9,7 @@ if [ "$1" == "--create-database" ]; then
     table_provider='CREATE TABLE IF NOT EXISTS "provider" ("code" VARCHAR(20) PRIMARY KEY, "MO" INT, "s200" INT, "s404" INT, "s500" INT, "s503" INT, "default" INT);'
     table_log_mo='CREATE TABLE IF NOT EXISTS "log_mo" ("id" SERIAL PRIMARY KEY, "number" VARCHAR(20), "date" TIMESTAMP, "provider" VARCHAR(20), "status" VARCHAR(20), "message" TEXT);'
     table_log_provider='CREATE TABLE IF NOT EXISTS "log_provider" ("id" SERIAL PRIMARY KEY, "code" VARCHAR(20), "date" TIMESTAMP, "status" VARCHAR(20), "message" TEXT);'
-    table_log_history='CREATE TABLE IF NOT EXISTS "log_history" ("id" SERIAL PRIMARY KEY, "number" VARCHAR(20), "provider" VARCHAR(20), "date" TIMESTAMP, "status" VARCHAR(20), "message" TEXT);'
+    table_log_history='CREATE TABLE IF NOT EXISTS "log_history" ("id" SERIAL PRIMARY KEY, "number" VARCHAR(20), "provider" VARCHAR(20), "date" TIMESTAMP, "status" VARCHAR(20), "rank" INT, "message" TEXT);'
     #table_cursor='CREATE TABLE IF NOT EXISTS "cursor" ("number_provider" VARCHAR(40) PRIMARY KEY, "counter" INT, "statement" VARCHAR(20));'
     #table_rank='CREATE TABLE IF NOT EXISTS "rank" ("number" VARCHAR(20) PRIMARY KEY, "total" INT, "sms_counter" INT);'
     
@@ -263,6 +263,7 @@ redis_host=$redis_host
 redis_port=$redis_port
 
 app_instances=$app_instances
+app_base_dir=$PWD
 api_host=$api_host
 api_port=$api_port
 

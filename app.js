@@ -37,12 +37,12 @@ try{
             database: env['database_name'],
             user: env['database_user'],
             password: env['database_password']
-        }
+        };
 
         env.redis_config = {
 			host: env['redis_host'],
 			port: env['redis_port']
-		}
+		};
 	} catch (error) {
 		console.log('No .env file found. Set one by typing ./set.environment.sh. Using default values...');
 
@@ -83,10 +83,7 @@ function getYmdDate (date) {
 
 async function redisScan (cursor, options, output = []) {
 
-	let scan = await redis_client.SCAN(cursor, options, (error, reply) => {
-		if (error) console.log(error);
-		console.log(reply);
-	});
+	let scan = await redis_client.SCAN(cursor, options);
 
 	const promises = scan.keys.map(async key => {
 		output.push(key);
@@ -100,8 +97,7 @@ async function redisScan (cursor, options, output = []) {
 }
 
 function rankNumberLite (number_average, provider_leverage, status) {
-
-    if (status == '200'){
+    if (status == 's200'){
 
         let leverage = (100 - provider_leverage) / 100;
         let rank = 50 + Math.round(number_average * (2 + leverage));
@@ -122,10 +118,7 @@ async function rankSmsLite (sms) {
 
     // console.log(`\nRanking SMS for ${sms.numero} on ${sms.fornecedor} - LITE MODE`);
 
-    let provider = await redis_client.GET(`provider-${sms.fornecedor}`, (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
+    let provider = await redis_client.GET(`provider-${sms.fornecedor}`);
 
     if (provider === null) return;
     
@@ -133,14 +126,11 @@ async function rankSmsLite (sms) {
     
     let provider_leverage = provider[sms.status.toLowerCase()];
 
-	let rank = provider_leverage;
+	// let rank = provider_leverage;
 
     let has_mo = false;
 
-    let mo = await redis_client.GET(`mo-${sms.numero}`, (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
+    let mo = await redis_client.GET(`mo-${sms.numero}`);
     
     if (mo == null && sms.status.toLowerCase() == 'mo') {
         mo = 1001
@@ -154,10 +144,7 @@ async function rankSmsLite (sms) {
             message: `New MO`
         };
 
-        await redis_client.RPUSH(`log-mo-${instance}`, JSON.stringify(log), (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        await redis_client.RPUSH(`log-mo-${instance}`, JSON.stringify(log));
     };
     
 	if (mo != null) {
@@ -167,10 +154,7 @@ async function rankSmsLite (sms) {
 
         if (mo <= 0){
 
-            await redis_client.DEL(`mo-${sms.numero}`, (error, reply) => {
-                if (error) console.log(error);
-                console.log(reply);
-            });
+            await redis_client.DEL(`mo-${sms.numero}`);
             mo = false;
 
             let log = {
@@ -182,84 +166,38 @@ async function rankSmsLite (sms) {
                 message: `MO is over`
             };
     
-            await redis_client.RPUSH(`log-mo-${instance}`, JSON.stringify(log), (error, reply) => {
-                if (error) console.log(error);
-                console.log(reply);
-            });
+            await redis_client.RPUSH(`log-mo-${instance}`, JSON.stringify(log));
         }
 	}
 
-    let cursor = await redis_client.GET(`cursor-${sms.numero}`, (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
+    let cursor = await redis_client.GET(`cursor-${sms.numero}`);
 
-    cursor = JSON.parse(cursor);
-
-    if (cursor != null && !has_mo){
-    
-		let number_average = cursor.total / cursor.sms_counter;
-
-        rank = rankNumberLite(number_average, provider_leverage, sms.status);
-	}
-
-    sms.peso = rank, sms.pesoFornecedor = provider_leverage;
-
-    if (cursor == null ) cursor = {"total": 0, "sms_counter": 0};
+    cursor? cursor = JSON.parse(cursor) : cursor = {"total": 0, "sms_counter": 0};
     if (cursor[sms.fornecedor] == undefined) cursor[sms.fornecedor] = {"total": 0, "statement": "insert"};
 
-    if (has_mo) sms.peso = 100;
+    number_average = Math.floor(cursor.total / cursor.sms_counter);
+    rank = rankNumberLite(number_average? number_average: 50, provider_leverage, sms.status);
     
+    if (has_mo) rank = 100;
+    sms.peso = rank;
+    sms.pesoFornecedor = provider_leverage;
+
+    let success = false;
     try {
-
-        if (cursor[sms.fornecedor].statement == "update"){
-
-            let old_leverage = await postgres_client.query(`SELECT sms FROM history WHERE number_provider = '${sms.numero}_${sms.fornecedor}_${cursor[sms.fornecedor]}'`);
-        }
-
+        
         // console.log(`Provider leverage for status ${sms.status} is ${provider_leverage}. History length is ${cursor[sms.fornecedor].total}\n`);
-
+        
         await postgres_client.query(`INSERT INTO history (number_provider, sms) VALUES ('${sms.numero}_${sms.fornecedor}_${cursor[sms.fornecedor].total}', '${JSON.stringify(sms)}') ON CONFLICT (number_provider) DO UPDATE SET sms = '${JSON.stringify(sms)}'`);
-
-        let log = {
-            type: 'history',
-            number: sms.numero,
-            provider: sms.fornecedor,
-            status: sms.status,
-            date: getTimestamp(new Date()),
-            message: 'Successfully inserted history'
-        };
-
-        await redis_client.RPUSH(`log-history-${instance}`, JSON.stringify(log), (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
-
-        try{
-            
-            cursor.total + sms.peso, cursor[sms.fornecedor].total++;
-            
-            if (cursor[sms.fornecedor].statement == "insert") cursor.sms_counter++;
-
-            if (cursor[sms.fornecedor].total > 10)
-                cursor[sms.fornecedor].total = 1, cursor[sms.fornecedor].statement = "update";            
-
-            await redis_client.SET(`cursor-${sms.numero}`, JSON.stringify(cursor), (error, reply) => {
-                if (error) console.log(error);
-                console.log(reply);
-            });
-        }
-        catch (error){
-            console.error(`Could not update cursor for ${sms.numero} on ${sms.fornecedor}... Re-syncing...`);
-            console.error(error);
-
-            await reSyncCursor(sms.numero, sms.fornecedor);
-        }
+        success = true;
     }
     catch (error) {
-        console.error(`Could not insert history for ${sms.numero} on ${sms.fornecedor}... Skipping...`);
+        let output = `Could not insert history for ${sms.numero} on ${sms.fornecedor}... `;
+        output += sms.tries ? `Tried ${sms.tries} times... ` : `Tried 1 time... `;
+
+        console.error(output);
         console.error(error);
-        console.error({sms: sms, cursor: cursor, provider: cursor[sms.numero], rank: rank, mo: mo})
+        console.error(debug? debug: '')
+        console.error({sms: sms, cursor: cursor, rank: rank, mo: mo})
 
         let log = {
             type: 'history',
@@ -270,59 +208,90 @@ async function rankSmsLite (sms) {
             message: 'Could not insert history'
         };
 
-        await redis_client.RPUSH(`log-history-${instance}`, JSON.stringify(log), (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        await redis_client.RPUSH(`log-history-${instance}`, JSON.stringify(log));
 
         delete sms.peso, delete sms.pesoFornecedor;
 
-        await redis_client.RPUSH(`sms-ranking-${instance}`, JSON.stringify(sms), (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        sms.tries ? sms.tries++ : sms.tries = 1;
+
+        if (sms.tries > 3) return rank;
+
+        await redis_client.RPUSH(`sms-ranking-${instance}`, JSON.stringify(sms));
     }
 
-    if (!mo) return rank;
+    if (success) {
 
-    try {
+        try{
 
-        await redis_client.SET(`mo-${sms.numero}`, mo, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+            if (cursor[sms.fornecedor].statement == "update"){
     
-        let mo_to_postgres = await redis_client.GET(`mo-to-postgres`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+                let old_leverage = await postgres_client.query(`SELECT sms FROM history WHERE number_provider = '${sms.numero}_${sms.fornecedor}_${cursor[sms.fornecedor]}'`);
+        
+                cursor.total -= old_leverage.rows[0].sms.peso;
+            }
+
+            cursor.total += sms.peso, cursor[sms.fornecedor].total++;
+            
+            if (cursor[sms.fornecedor].statement == "insert") cursor.sms_counter++;
     
-        if (mo_to_postgres == null) mo_to_postgres = '';
+            if (cursor[sms.fornecedor].total == 10)
+                cursor[sms.fornecedor].total = 0, cursor[sms.fornecedor].statement = "update";            
     
-        if ( mo_to_postgres == '' || !mo_to_postgres.includes(sms.numero) )
-            await redis_client.SET(`mo-to-postgres`, `${mo_to_postgres}${sms.numero}~${instance}/`, (error, reply) => {
-                if (error) console.log(error);
-                console.log(reply);
-            });
+            await redis_client.SET(`cursor-${sms.numero}`, JSON.stringify(cursor));
+        }
+        catch (error){
+            console.error(`Could not update cursor for ${sms.numero} on ${sms.fornecedor}... Re-syncing...`);
+            console.error(error);
+    
+            await reSyncCursor(sms.numero, sms.fornecedor);
+        }
+
+        try {
+            let log = {
+                type: 'history',
+                number: sms.numero,
+                provider: sms.fornecedor,
+                status: sms.status,
+                date: getTimestamp(new Date()),
+                rank: Math.floor(cursor.total / cursor.sms_counter),
+                message: 'Successfully inserted history'
+            };
+
+            await redis_client.RPUSH(`log-history-${instance}`, JSON.stringify(log));
+        }
+        catch (error) {
+            console.error(`Could not log history for ${sms.numero} on ${sms.fornecedor}... Skipping...`);
+            console.error(error);
+        }
+
+        try {
+            await redis_client.ZADD(`rank`, {score: Math.floor(cursor.total/cursor.sms_counter), value: sms.numero});
+        }
+        catch (error) {
+    
+            console.log(`Could not update rank for ${sms.numero}... Skipping...`);
+            console.error(error);
+        }
+
+        if (!mo) return rank;
+
+        try {
+
+            await redis_client.SET(`mo-${sms.numero}`, mo);
+        
+            let mo_to_postgres = await redis_client.GET(`mo-to-postgres`);
+        
+            if (mo_to_postgres == null) mo_to_postgres = '';
+        
+            if ( mo_to_postgres == '' || !mo_to_postgres.includes(sms.numero) )
+                await redis_client.SET(`mo-to-postgres`, `${mo_to_postgres}${sms.numero}~${instance}/`);
+        }
+        catch (error) {
+
+            console.log(`Could not save MO for ${sms.numero}... Skipping...`);
+            console.error(error);
+        }
     }
-    catch (error) {
-
-        console.log(`Could not save MO for ${sms.numero}... Skipping...`);
-        console.error(error);
-    }
-
-    // try {
-    //     // 
-    //     await redis_client.ZADD(`rank`, {score: Math.floor(cursor.total/cursor.sms_counter), value: sms.numero}, (error, reply) => {
-    //         if (error) console.log(error);
-    //         console.log(reply);
-    //     });
-    // }
-    // catch (error) {
-
-    //     console.log(`Could not update rank for ${sms.numero}... Skipping...`);
-    //     console.error(error);
-    // }
     
     return rank;
 }
@@ -343,10 +312,7 @@ async function reSyncCursor (number, provider) {
             cursor[provider]++;
         });
 
-        await redis_client.SET(`cursor-${sms.numero}`, JSON.stringify(cursor), (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        await redis_client.SET(`cursor-${sms.numero}`, JSON.stringify(cursor));
     }
     catch (error) {
         console.log(`Could not re-sync cursor for ${number} on ${provider}... Re-triying...`);
@@ -360,10 +326,7 @@ async function persistProviders () {
 
     while (true) {
 
-        let code = await redis_client.LPOP(`providers`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        let code = await redis_client.LPOP(`providers`);
 
         if (code == null) break;
 
@@ -375,10 +338,7 @@ async function persistProviders () {
             console.log(`Deleting provider ${code} on instance ${instance}`);
 
             try{
-                await redis_client.DEL(`provider-${code}`, (error, reply) => {
-                    if (error) console.log(error);
-                    console.log(reply);
-                });
+                await redis_client.DEL(`provider-${code}`);
                 await postgres_client.query(`DELETE FROM provider WHERE code = '${code}'`);
 
                 let log = {
@@ -389,10 +349,7 @@ async function persistProviders () {
                     message: `Successfully deleted provider`
                 };
         
-                await redis_client.RPUSH(`log-provider-${instance}`, JSON.stringify(log), (error, reply) => {
-                    if (error) console.log(error);
-                    console.log(reply);
-                });
+                await redis_client.RPUSH(`log-provider-${instance}`, JSON.stringify(log));
 
                 continue;
             }
@@ -408,17 +365,11 @@ async function persistProviders () {
                     message: `Could not delete provider`
                 };
         
-                await redis_client.RPUSH(`log-provider-${instance}`, JSON.stringify(log), (error, reply) => {
-                    if (error) console.log(error);
-                    console.log(reply);
-                });
+                await redis_client.RPUSH(`log-provider-${instance}`, JSON.stringify(log));
             }
         }
 
-        let provider = await redis_client.GET(`provider-${code}`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        let provider = await redis_client.GET(`provider-${code}`);
 
         if (provider == null) continue;
 
@@ -446,10 +397,7 @@ async function persistProviders () {
                 message: `Successfully inserted provider`
             };
 
-            await redis_client.RPUSH(`log-provider-${instance}`, JSON.stringify(log), (error, reply) => {
-                if (error) console.log(error);
-                console.log(reply);
-            });
+            await redis_client.RPUSH(`log-provider-${instance}`, JSON.stringify(log));
         }
         catch (error) {
             console.error(`Could not insert provider ${code} on instance ${instance}... Skipping...`);
@@ -463,20 +411,14 @@ async function persistProviders () {
                 message: `Could not insert provider`
             };
     
-            await redis_client.RPUSH(`log-provider-${instance}`, JSON.stringify(log), (error, reply) => {
-                if (error) console.log(error);
-                console.log(reply);
-            });
+            await redis_client.RPUSH(`log-provider-${instance}`, JSON.stringify(log));
         }
     }
 }
 
 async function persistMo () {
     
-    let mo_to_postgres = await redis_client.GET(`mo-to-postgres`, (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
+    let mo_to_postgres = await redis_client.GET(`mo-to-postgres`);
 
     let pattern = new RegExp(`[0-9]+~${instance}\/`);
 
@@ -490,10 +432,7 @@ async function persistMo () {
 
         mo_to_postgres = mo_to_postgres.replace(`${number}~${instance}/`, '');
 
-        let mo = await redis_client.GET(`mo-${number}`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        let mo = await redis_client.GET(`mo-${number}`);
 
         if (mo == null) continue;
 
@@ -515,17 +454,11 @@ async function persistMo () {
                 message: `Could not insert MO`
             };
     
-            await redis_client.RPUSH(`log-mo-${instance}`, JSON.stringify(log), (error, reply) => {
-                if (error) console.log(error);
-                console.log(reply);
-            });
+            await redis_client.RPUSH(`log-mo-${instance}`, JSON.stringify(log));
         }
     }
 
-    await redis_client.DEL(`mo-to-postgres`, (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
+    await redis_client.DEL(`mo-to-postgres`);
 }
 
 async function connectToPostgres () {
@@ -553,6 +486,120 @@ async function connectToRedis () {
     redis_client.connect();
 }
 
+async function processSms () {
+
+    while (true){
+
+        let providers = await redis_client.LLEN(`providers`);
+
+        if (providers > 0) break;
+
+        let sms = await redis_client.LPOP(`sms-ranking-${instance}`);
+    
+        if (sms == null) break;
+    
+        sms = JSON.parse(sms);
+    
+        let history = await rankSmsLite(sms);
+        if (history == undefined)
+            console.log(`Provider ${sms.fornecedor} not found. Skipping...`);
+    }
+}
+
+function getTimestamp (date) {
+
+    let year = date.getFullYear();
+    let month = String(date.getMonth() + 1).padStart(2, '0');
+    let day = String(date.getDate()).padStart(2, '0');
+
+    let hour = String(date.getHours()).padStart(2, '0');
+    let minute = String(date.getMinutes()).padStart(2, '0');
+    let second = String(date.getSeconds()).padStart(2, '0');
+
+    return year + '-' + month + '-' + day + ' ' + hour + ':' + minute + ':' + second;
+}
+
+async function persistLogMo () {
+
+    try {
+        let query = `INSERT INTO log_mo `
+            query += `("number", "provider", "status", "message", "date") VALUES `;
+
+        while (true){
+
+            let log = await redis_client.LPOP(`log-mo-${instance}`);
+        
+            if (log == null) break;
+        
+            log = JSON.parse(log);
+
+            query += `('${log.number}', '${log.provider}', '${log.status}', '${log.message}', '${log.date}'), `;
+        }
+
+        query = query.slice(0, -2);
+
+        await postgres_client.query(query);
+    }
+    catch (error) {
+        console.error(`Could not insert MO logs on instance ${instance}... Skipping...`);
+        console.error(error);
+    }
+}
+
+async function persistLogProvider () {
+    
+    try {
+        let query = `INSERT INTO log_provider `
+            query += `("code", "status", "message", "date") VALUES `;
+
+        while (true){
+
+            let log = await redis_client.LPOP(`log-provider-${instance}`);
+        
+            if (log == null) break;
+        
+            log = JSON.parse(log);
+
+            query += `('${log.code}', '${log.status}', '${log.message}', '${log.date}'), `;
+        }
+
+        query = query.slice(0, -2);
+
+        await postgres_client.query(query);
+    }
+    catch (error) {
+        console.error(`Could not insert provider logs on instance ${instance}... Skipping...`);
+        console.error(error);
+    }
+}
+
+async function persistLogHistory () {
+    
+        try {
+            let query = `INSERT INTO log_history `
+                query += `("number", "provider", "status", "message", "date", "rank") VALUES `;
+    
+            while (true){
+    
+                let log = await redis_client.LPOP(`log-history-${instance}`);
+            
+                if (log == null) break;
+            
+                log = JSON.parse(log);
+    
+                query += `('${log.number}', '${log.provider}', '${log.status}', '${log.message}', '${log.date}', '${log.rank}'), `;
+            }
+    
+            query = query.slice(0, -2);
+    
+            await postgres_client.query(query);
+        }
+        catch (error) {
+            console.error(`Could not insert history logs on instance ${instance}... Skipping...`);
+            console.error(error);
+        }
+}
+
 async function startApp () {
 
     console.log(`\nLoading app on instance ${instance}...`);
@@ -562,10 +609,7 @@ async function startApp () {
     let providers = await redisScan(0, {MATCH: 'provider-*', COUNT: 1000});
 
     providers.forEach(key => {
-        redis_client.DEL(key, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        redis_client.DEL(key);
     });
 
     delete providers;
@@ -573,10 +617,7 @@ async function startApp () {
     let mos = await redisScan(0, {MATCH: 'mo-*', COUNT: 1000});
 
     mos.forEach(key => {
-        redis_client.DEL(key, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        redis_client.DEL(key);
     });
 
     delete mos;
@@ -584,18 +625,12 @@ async function startApp () {
     let cursors = await redisScan(0, {MATCH: 'cursor-*', COUNT: 1000});
 
     cursors.forEach(key => {
-        redis_client.DEL(key, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        redis_client.DEL(key);
     });
 
     delete cursors;
 
-    await redis_client.DEL(`rank`, (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
+    await redis_client.DEL(`rank`);
 
     // SET
 
@@ -611,10 +646,7 @@ async function startApp () {
             provider[value.toString().toLowerCase()] = provider_value;
         });
         
-        redis_client.SET(`provider-${code}`, JSON.stringify(provider), (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        redis_client.SET(`provider-${code}`, JSON.stringify(provider));
     });
 
     delete providers_wrapper;
@@ -625,10 +657,7 @@ async function startApp () {
         let number = mo.number;
         delete mo.number;
 
-        redis_client.SET(`mo-${number}`, mo.balance, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        redis_client.SET(`mo-${number}`, mo.balance);
     });
 
     delete mos_wrapper;
@@ -652,15 +681,9 @@ async function startApp () {
     delete history;
 
     Object.keys(cursors).forEach(number => {
-        redis_client.SET(`cursor-${number}`, JSON.stringify(cursors[number]), (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        redis_client.SET(`cursor-${number}`, JSON.stringify(cursors[number]));
 
-        redis_client.ZADD(`rank`, {score: Math.floor(cursors[number].total/cursors[number].sms_counter), value: number}, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        redis_client.ZADD(`rank`, {score: Math.floor(cursors[number].total/cursors[number].sms_counter), value: number});
         delete cursors[number];
     });
 
@@ -672,10 +695,7 @@ async function startApp () {
     //     let number_provider = cursor.number_provider;
     //     delete cursor.number_provider;
 
-    //     redis_client.SET(`cursor-${number_provider}`, JSON.stringify(cursor), (error, reply) => {
-    //         if (error) console.log(error);
-    //         console.log(reply);
-    //     });
+    //     redis_client.SET(`cursor-${number_provider}`, JSON.stringify(cursor));
     // });
 
     // delete cursors_wrapper;
@@ -683,10 +703,7 @@ async function startApp () {
     // let ranks = await redisScan(0, {MATCH: 'rank-*', COUNT: 1000});
 
     // Object.keys(ranks).forEach(key => {
-    //     redis_client.DEL(key, (error, reply) => {
-    //         if (error) console.log(error);
-    //         console.log(reply);
-    //     });
+    //     redis_client.DEL(key);
     // });
 
     // delete ranks;
@@ -697,10 +714,7 @@ async function startApp () {
     //     let number = rank.number;
     //     delete rank.number;
 
-    //     redis_client.SET(`rank-${number}`, `${rank.total}/${rank.sms_counter}`, (error, reply) => {
-    //         if (error) console.log(error);
-    //         console.log(reply);
-    //     });
+    //     redis_client.SET(`rank-${number}`, `${rank.total}/${rank.sms_counter}`);
     // });
 
     // delete ranks_wrapper;
@@ -710,10 +724,7 @@ async function startApp () {
     // console.log(histories);
 
     // Object.keys(histories).forEach(key => {
-    //     redis_client.DEL(key, (error, reply) => {
-    //         if (error) console.log(error);
-    //         console.log(reply);
-    //     });
+    //     redis_client.DEL(key);
     // });
 
     // return;
@@ -731,10 +742,7 @@ async function setDashboard () {
 
     // let cursors = await postgres_client.query(`SELECT COUNT (*) FROM (SELECT DISTINCT SUBSTRING("number_provider" FROM 1 FOR POSITION('_' IN "number_provider") - 1) AS "number" FROM history) AS t`);
     // dashboard.cursors = cursors.rows[0].count;
-    let ranks = await redis_client.ZCOUNT(`rank`, '-inf', '+inf', (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
+    let ranks = await redis_client.ZCOUNT(`rank`, '-inf', '+inf');
     dashboard.ranks = ranks;
 
     // 86400000 = 1 day in milliseconds
@@ -771,151 +779,24 @@ async function setDashboard () {
 
     dashboard.log_mo = log_mo.rows;
 
-    let ranked_by_provider = await postgres_client.query(`SELECT COUNT (*), substring(number_provider from 15 for length(number_provider) ) AS "code" FROM history WHERE substring(number_provider, length(number_provider)) = '0' GROUP BY "code" ORDER BY count asc`);
+    let ranked_by_provider = await postgres_client.query(`select count(*), provider from log_history group by provider order by count`);
 
     ranked_by_provider.rows.forEach((value, key) => {
-        ranked_by_provider.rows[key].code = ranked_by_provider.rows[key].code.slice(0, -2);
+        ranked_by_provider.rows[key].code = ranked_by_provider.rows[key].provider;
     });
 
     dashboard.ranked_by_provider = ranked_by_provider.rows;
 
-    let logs = await postgres_client.query(`SELECT COUNT (*) FROM log_history as lh, log_mo as lm, log_provider as lp WHERE lh.message = 'Could not insert history' OR lm.status = 'error' OR lp.status = 'error'`);
+    let error_logs = await postgres_client.query(`SELECT COUNT (*) FROM log_history WHERE "message" = 'Could not insert history'`);
+    dashboard.error_logs = parseInt(error_logs.rows[0].count);
 
-    dashboard.logs = logs.rows[0].count;
+    error_logs = await postgres_client.query(`SELECT COUNT (*) FROM log_mo WHERE status = 'error'`);
+    dashboard.error_logs += parseInt(error_logs.rows[0].count);
 
-    await redis_client.SET(`dashboard`, JSON.stringify(dashboard), (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
-}
+    error_logs = await postgres_client.query(`SELECT COUNT (*) FROM log_provider WHERE status = 'error'`);
+    dashboard.error_logs += parseInt(error_logs.rows[0].count);
 
-async function processSms () {
-
-    while (true){
-
-        let providers = await redis_client.LLEN(`providers`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
-
-        if (providers > 0) break;
-
-        let sms = await redis_client.LPOP(`sms-ranking-${instance}`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
-    
-        if (sms == null) break;
-    
-        sms = JSON.parse(sms);
-    
-        let history = await rankSmsLite(sms);
-        if (history == undefined)
-            console.log(`Provider ${sms.fornecedor} not found. Skipping...`);
-    }
-}
-
-function getTimestamp (date) {
-
-    let year = date.getFullYear();
-    let month = String(date.getMonth() + 1).padStart(2, '0');
-    let day = String(date.getDate()).padStart(2, '0');
-
-    let hour = String(date.getHours()).padStart(2, '0');
-    let minute = String(date.getMinutes()).padStart(2, '0');
-    let second = String(date.getSeconds()).padStart(2, '0');
-
-    return year + '-' + month + '-' + day + ' ' + hour + ':' + minute + ':' + second;
-}
-
-async function persistLogMo () {
-
-    try {
-        let query = `INSERT INTO log_mo `
-            query += `("number", "provider", "status", "message", "date") VALUES `;
-
-        while (true){
-
-            let log = await redis_client.LPOP(`log-mo-${instance}`, (error, reply) => {
-                if (error) console.log(error);
-                console.log(reply);
-            });
-        
-            if (log == null) break;
-        
-            log = JSON.parse(log);
-
-            query += `('${log.number}', '${log.provider}', '${log.status}', '${log.message}', '${log.date}'), `;
-        }
-
-        query = query.slice(0, -2);
-
-        await postgres_client.query(query);
-    }
-    catch (error) {
-        console.error(`Could not insert MO logs on instance ${instance}... Skipping...`);
-        console.error(error);
-    }
-}
-
-async function persistLogProvider () {
-    
-    try {
-        let query = `INSERT INTO log_provider `
-            query += `("code", "status", "message", "date") VALUES `;
-
-        while (true){
-
-            let log = await redis_client.LPOP(`log-provider-${instance}`, (error, reply) => {
-                if (error) console.log(error);
-                console.log(reply);
-            });
-        
-            if (log == null) break;
-        
-            log = JSON.parse(log);
-
-            query += `('${log.code}', '${log.status}', '${log.message}', '${log.date}'), `;
-        }
-
-        query = query.slice(0, -2);
-
-        await postgres_client.query(query);
-    }
-    catch (error) {
-        console.error(`Could not insert provider logs on instance ${instance}... Skipping...`);
-        console.error(error);
-    }
-}
-
-async function persistLogHistory () {
-    
-        try {
-            let query = `INSERT INTO log_history `
-                query += `("number", "provider", "status", "message", "date") VALUES `;
-    
-            while (true){
-    
-                let log = await redis_client.LPOP(`log-history-${instance}`, (error, reply) => {
-                    if (error) console.log(error);
-                    console.log(reply);
-                });
-            
-                if (log == null) break;
-            
-                log = JSON.parse(log);
-    
-                query += `('${log.number}', '${log.provider}', '${log.status}', '${log.message}', '${log.date}'), `;
-            }
-    
-            query = query.slice(0, -2);
-    
-            await postgres_client.query(query);
-        }
-        catch (error) {
-            console.error(`Could not insert history logs on instance ${instance}... Skipping...`);
-            console.error(error);
-        }
+    await redis_client.SET(`dashboard`, JSON.stringify(dashboard));
 }
 
 async function main () {
@@ -927,26 +808,22 @@ async function main () {
     await connectToPostgres();
     await connectToRedis();
 
-    await redis_client.SET(`loaded`, 'false', (error, reply) => {
-        if (error) console.log(error);
-        console.log(reply);
-    });
-
     if (instance != 1) while (true){
 
-        await sleep(5000).then(() => {});
+        await sleep(10000).then(() => {});
 
-        let loaded = await redis_client.GET(`loaded`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        let loaded = await redis_client.GET(`loaded`);
 
         if (loaded == 'true') break;
 
-        console.log(`Waiting for instance 1 to load on instance ${instance}...`)
+        if (instance == 2)
+            console.log(`Waiting for app to load on instance 1...`)
     }
 
     else {
+
+        await redis_client.SET(`loaded`, 'false');
+
         console.time('Total load time');
             console.time('Start app');
             await startApp();
@@ -955,10 +832,7 @@ async function main () {
             await setDashboard();
             console.timeEnd('Set dashboard');
 
-            await redis_client.SET(`loaded`, 'true', (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-            });
+            await redis_client.SET(`loaded`, 'true');
         console.timeEnd('Total load time');
     }
 
@@ -966,20 +840,14 @@ async function main () {
 
     while (true){
 
-        let providers = await redis_client.LLEN(`providers`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        let providers = await redis_client.LLEN(`providers`);
 
         if (providers > 0) {
             await persistProviders();
             continue;
         }
 
-        let sms = await redis_client.LLEN(`sms-ranking-${instance}`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        let sms = await redis_client.LLEN(`sms-ranking-${instance}`);
 
         if (sms > 0) {
             console.time('Process SMS time');
@@ -989,10 +857,7 @@ async function main () {
             continue;
         }
 
-        let mo_to_postgres = await redis_client.GET(`mo-to-postgres`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        let mo_to_postgres = await redis_client.GET(`mo-to-postgres`);
 
         if (mo_to_postgres != null){
             
@@ -1003,23 +868,16 @@ async function main () {
             continue;
         }
 
-        let log_history = await redis_client.LLEN(`log-history-${instance}`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        let log_history = await redis_client.LLEN(`log-history-${instance}`);
 
         if (log_history > 0) {
-            console.time('Persist Log time');
             console.time('Persist Log History time');
             await persistLogHistory();
             console.timeEnd('Persist Log History time');
             continue;
         }
 
-        let log_provider = await redis_client.LLEN(`log-provider-${instance}`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        let log_provider = await redis_client.LLEN(`log-provider-${instance}`);
 
         if (log_provider > 0) {
             console.time('Persist Log Provider time');
@@ -1028,16 +886,12 @@ async function main () {
             continue;
         }
 
-        let log_mo = await redis_client.LLEN(`log-mo-${instance}`, (error, reply) => {
-            if (error) console.log(error);
-            console.log(reply);
-        });
+        let log_mo = await redis_client.LLEN(`log-mo-${instance}`);
 
         if (log_mo > 0) {
             console.time('Persist Log MO time');
             await persistLogMo();
             console.timeEnd('Persist Log MO time');
-            console.timeEnd('Persist Log time');
             continue;
         }
         

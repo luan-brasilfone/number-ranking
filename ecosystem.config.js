@@ -28,13 +28,23 @@ let api_env = {
     redis_config: redis_config
 };
 
-ecosystem.apps.push({
+let api_instance = {
     name: env['api_name'],
     script: `${env['app_base_dir']}/${env['api_script']}`,
     autorestart: (api_autorestart != 'no' && api_autorestart != 'n'),
     watch: true,
     args: `${env['app_instances']} '${JSON.stringify(api_env)}'`,
-});
+};
+
+let tonelada_instance = {
+    name: 'tonelada',
+    script: `${env['app_base_dir']}/../bak/tonelada.php`,
+    autorestart: (api_autorestart != 'no' && api_autorestart != 'n'),
+    watch: true,
+};
+
+ecosystem.apps.push(api_instance);
+ecosystem.apps.push(tonelada_instance);
 
 let app_autorestart = env['app_autorestart'].toLowerCase();
 
