@@ -38,7 +38,7 @@ let api_instance = {
 
 let tonelada_instance = {
     name: 'tonelada',
-    script: `${env['app_base_dir']}/../bak/tonelada.php`,
+    script: `${env['app_base_dir']}/tonelada.php`,
     autorestart: (api_autorestart != 'no' && api_autorestart != 'n'),
     watch: true,
 };
