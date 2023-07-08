@@ -13,7 +13,7 @@ let env = new Object();
 try{
 	env = JSON.parse(process.argv[3]);
 } catch (error) {
-	console.log('\nNo .env file provided. Checking if it is set...');
+	console.log(`${new Date().toLocaleTimeString()} - No .env file provided. Checking if it is set...`);
 
 	const fs = require('fs');
 
@@ -48,7 +48,7 @@ try{
 			port: env['redis_port']
 		};
 	} catch (error) {
-		console.log('No .env file found. Set one by typing ./set.environment.sh. Using default values...');
+		console.log(`${new Date().toLocaleTimeString()} - No .env file found. Set one by typing ./set.environment.sh. Using default values...`);
 
 		env.api_host = "localhost";
 		env.api_port = 3000;
@@ -78,11 +78,12 @@ let functions = new Object();
 
 functions['get-zscore'] = async (number = false) => {
 
-	console.log(`Getting rank for ${number}`);
+	console.log(`${new Date().toLocaleTimeString()} - Getting rank for ${number}`);
 
 	if (!number) return 'No number provided';
 
-	let mo = await redis_client.GET(`mo-${number}`);
+	// let mo = await redis_client.GET(`mo-${number}`);
+	let mo = await redis_client.HGET(`mo`, number);
 
 	if (mo != null) return 100;
 
@@ -103,7 +104,7 @@ functions['rpush-sms'] = async (sms) => {
 functions['get-providers'] = async (code) => {
 
 	if (code == undefined){
-		console.log(`Getting providers`);
+		console.log(`${new Date().toLocaleTimeString()} - Getting providers`);
 		let providers = await functions['redis-scan'](0, {MATCH: 'provider-*', COUNT: '1000'});
 
 		Object.keys(providers).forEach(key => {
@@ -114,8 +115,9 @@ functions['get-providers'] = async (code) => {
 		return JSON.stringify(providers);
 	}
 	
-	console.log(`Getting provider ${code}`);
-	let provider = await redis_client.GET(`provider-${code}`);
+	console.log(`${new Date().toLocaleTimeString()} - Getting provider ${code}`);
+	// let provider = await redis_client.GET(`provider-${code}`);
+	let provider = await redis_client.HGET(`provider`, code);
 
 	if (provider == null) return 'No provider found';
 
@@ -166,9 +168,11 @@ functions['save-provider'] = async (body, method) => {
 
 	if (providers == null) providers = new Object();
 
-	redis_client.SET(`provider-${body.code}`, JSON.stringify(row));
+	// await redis_client.SET(`provider-${body.code}`, JSON.stringify(row));
+	await redis_client.HSET(`provider`, body.code, JSON.stringify(row));
 
-	redis_client.RPUSH('providers', `sav/${body.code}`);
+	await redis_client.RPUSH('persist-provider', `sav/${body.code}`);
+	await redis_client.SADD('operations', `persist-provider`);
 
 	return JSON.stringify({message: 'Provider saved', success: true});
 }
@@ -177,13 +181,15 @@ functions['delete-provider'] = async (code) => {
 
 	if (code == undefined) return JSON.stringify({message: 'No code provided'});
 
-	let provider = await redis_client.GET(`provider-${code}`);
+	// let provider = await redis_client.GET(`provider-${code}`);
+	let provider = await redis_client.HGET(`provider`, code);
 
 	if (provider == null) return JSON.stringify({message: 'No record found'});
 
 	redis_client.DEL(`provider-${code}`);
 
 	redis_client.LPUSH('providers', `del/${code}`);
+	redis_client.SADD('operations', 'persist-provider');
 
 	return JSON.stringify({message: 'Provider deleted', success: true});
 }
@@ -191,7 +197,7 @@ functions['delete-provider'] = async (code) => {
 async function getNumbers (number) {
 
 	if (number == undefined){
-		console.log(`Getting numbers`);
+		console.log(`${new Date().toLocaleTimeString()} - Getting numbers`);
 		let result = await postgres_client.query(`SELECT COUNT (*), "number" FROM log_history GROUP BY "number" ORDER BY count desc LIMIT 1000`);
 
 		let numbers = {};
@@ -202,7 +208,7 @@ async function getNumbers (number) {
 		return JSON.stringify(numbers);
 	}
 
-	console.log(`Getting number ${number}`);
+	console.log(`${new Date().toLocaleTimeString()} - Getting number ${number}`);
 	let log_list = await postgres_client.query(`SELECT * FROM log_history WHERE number = '${number}' ORDER BY "date" DESC`);
 
 	if (log_list.rows.length == 0) return { message: 'No SMS entries found for that number' };
@@ -224,6 +230,18 @@ functions['get-dashboard'] = async () => {
 	let dashboard = await redis_client.GET('dashboard');
 
 	return dashboard;
+}
+
+async function setDashboard () {
+
+	try {
+
+		await redis_client.SADD('operations', 'set-dashboard');
+		return JSON.stringify({message: 'Dashboard successfully updated', success: true});
+	}
+	catch (error) {
+		return JSON.stringify({message: 'Something went wrong while updating dashboard'});
+	}
 }
 
 functions['redis-scan'] = async (cursor, options, output = {}) => {
@@ -321,10 +339,15 @@ functions['start-api'] = async () => {
 		res.status(200).send(`${await functions['get-dashboard']()}`);
 	});
 
+	app.put('/dashboard', async (req, res) => {
+
+		res.status(200).send(`${await setDashboard()}`);
+	});
+
 	app.listen(api_port, api_host, () => {});
 
 	setInterval(() => {
-		console.log(`Added ${counter} SMS to rank on the last minute. Listening at http://${api_host}:${api_port}`);
+		console.log(`${new Date().toLocaleTimeString()} - Added ${counter} SMS to rank on the last minute. Listening at http://${api_host}:${api_port}`);
 		counter = 0;
 	}, 60000);
 }
