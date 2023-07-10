@@ -35,7 +35,6 @@ if (process.env.use_containers === 'yes' || process.env.use_containers === 'y') 
 	execSync(`docker exec ${process.env.CONTAINER_POSTGRES} sh -c "${command_log_history}"`);
 	
 	console.log('Database created successfully.');
-	process.exit(0);
 }
 
 execSync(command_drop);
@@ -49,4 +48,3 @@ execSync(command_log_provider);
 execSync(command_log_history);
 
 console.log('Database created successfully.');
-process.exit(0);

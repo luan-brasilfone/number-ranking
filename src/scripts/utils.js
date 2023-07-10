@@ -1,10 +1,19 @@
 const redis_client = require('../db/redis');
 
-function sleep(seconds) {
+exports.sleep = seconds => {
 	return new Promise(resolve => setTimeout(resolve, seconds * 1000));
 }
 
-async function redisScan(config) {
+exports.getYmdDate = date => {
+
+    let year = date.getFullYear();
+    let month = String(date.getMonth() + 1).padStart(2, '0');
+    let day = String(date.getDate()).padStart(2, '0');
+
+    return year + '-' + month + '-' + day;
+}
+
+exports.redisScan = async config => {
 	
 	const cursor 		= config.cursor 	|| 0;
 	const options 		= config.options;
@@ -31,8 +40,3 @@ async function redisScan(config) {
 	
 	return { cursor: scan.cursor, output: output };
 }
-
-module.exports = {
-	sleep,
-	redisScan
-};
