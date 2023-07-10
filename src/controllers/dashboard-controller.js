@@ -10,7 +10,7 @@ exports.getDashboard = async (req, res) => {
 exports.setDashboard = async (req, res) => {
 	
 	try {
-		await redis_client.SADD('operations', 'set-dashboard');
+		await redis_client.SADD('priority-task', 'set-dashboard');
 		return res.json({message: 'Dashboard successfully updated', success: true});
 	}
 	catch (error) {

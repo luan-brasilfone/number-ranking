@@ -8,6 +8,7 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 
 BASE_DIR=/home/user/number-ranking
+APP_DELAY=30
 APP_INSTANCES=1
 API_HOST=localhost
 API_PORT=3000

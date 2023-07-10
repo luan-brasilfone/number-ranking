@@ -87,7 +87,7 @@ exports.saveProvider = async (req, res) => {
 	await redis_client.HSET(`provider`, body.code, JSON.stringify(row));
 
 	await redis_client.RPUSH('persist-provider', `sav/${body.code}`);
-	await redis_client.SADD('operations', `persist-provider`);
+	await redis_client.SADD('priority-task', `persist-provider`);
 
 	return res.json({message: 'Provider saved', success: true});
 };
@@ -105,7 +105,7 @@ exports.deleteProvider = async (req, res) => {
 	redis_client.HDEL(`provider`, code);
 
 	redis_client.LPUSH('providers', `del/${code}`);
-	redis_client.SADD('operations', 'persist-provider');
+	redis_client.SADD('priority-task', 'persist-provider');
 
 	return res.json({message: 'Provider deleted', success: true});
 };

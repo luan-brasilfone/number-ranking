@@ -1,5 +1,13 @@
+require('dotenv').config();
+
+const config = require('../config/app');
+
+const utils = require('./scripts/utils');
+
 let instance = 1;
 if (process.argv[2]) instance = process.argv[2];
+
+const controller = require('./controllers/app-controller');
 
 function rankNumberLite (number_average, provider_leverage, status) {
     if (status == 's200'){
@@ -359,9 +367,9 @@ async function processSms () {
     }
 }
 
-async function manageOperations (operation) {
+async function manageTasks (task) {
 
-    switch (operation) {
+    switch (task) {
         case 'set-dashboard':
             let timer = Date.now();
             await setDashboard();
@@ -378,255 +386,72 @@ async function manageOperations (operation) {
     }
 }
 
-async function startApp () {
-
-    console.log(`${new Date().toLocaleTimeString()} - Loading app on instance ${instance}...`);
-
-    // DELETE
-
-    // let providers = await redisScan(0, {MATCH: 'provider-*', COUNT: 1000});
-    let providers = await redisScan({cursor: 0, options: {MATCH: 'provider-*', COUNT: 1000}, output: []});
-
-    providers.forEach(key => {
-        redis_client.DEL(key);
-    });
-
-    delete providers;
-    await redis_client.DEL(`provider`);
-
-    let mos = await redisScan({cursor: 0, options: {MATCH: 'mo-*', COUNT: 1000}, output: []});
-
-    mos.forEach(key => {
-        redis_client.DEL(key);
-    });
-
-    delete mos;
-    await redis_client.DEL(`mo`);
-
-    await redis_client.DEL(`cursor`);
-
-    await redis_client.DEL(`rank`);
-
-    // SET
-
-    let providers_wrapper = await postgres_client.query('SELECT * FROM provider');
-    
-    if (providers_wrapper.rows.length > 0) providers_wrapper.rows.forEach((provider) => {
-        let code = provider.code;
-        delete provider.code;
-
-        Object.keys(provider).forEach((value, key) => {
-            let provider_value = provider[value];
-            delete provider[value];
-            provider[value.toString().toLowerCase()] = provider_value;
-        });
-        
-        // redis_client.SET(`provider-${code}`, JSON.stringify(provider));
-        redis_client.HSET(`provider`, { [code]: JSON.stringify(provider) });
-    });
-
-    delete providers_wrapper;
-
-    let mos_wrapper = await postgres_client.query('SELECT * FROM mo');
-
-    if (mos_wrapper.rows.length > 0) mos_wrapper.rows.forEach((mo) => {
-        let number = mo.number;
-        delete mo.number;
-
-        // redis_client.SET(`mo-${number}`, mo.balance);
-        redis_client.HSET(`mo`, { [number]: mo.balance });
-    });
-
-    delete mos_wrapper;
-
-    let counter = 0, limit = 100000, cursors = new Object();
-    while (true) {
-
-        console.time(`iteration ${counter}`)
-        let history = await postgres_client.query(`SELECT * FROM history ORDER BY number_provider LIMIT ${limit} OFFSET ${counter * limit}`);
-
-        if (history.rows.length == 0) break;
-        
-        let promises = history.rows.map(async (sms_entry, key) => {
-            let [number, provider] = sms_entry.number_provider.split('_');
-            
-            // let cursor = await redis_client.HGET(`cursor`, number);
-            let cursor = cursors[number] ? cursors[number] : { total: 0, sms_counter: 0 };
-            cursor[provider] = cursor[provider] ? cursor[provider] : { total: 0, statement: "insert" };
-
-            let providerCursor = cursor[provider];
-          
-            cursor.total += sms_entry.sms.peso, providerCursor.total++;
-            if (providerCursor.statement == "insert")
-                cursor.sms_counter++;
-
-            cursors[number] = cursor;
-        });
-
-        await Promise.all(promises);
-        
-        console.timeEnd(`iteration ${counter}`)
-        counter++;
-    }
-
-    const ioredis = require('ioredis');
-    const redis = new ioredis();
-    const pipeline = redis.pipeline();
-
-    cursors = Object.keys(cursors).forEach((number) => {
-
-        pipeline.hset(`cursor`, { [number]: JSON.stringify(cursors[number]) });
-    });
-    pipeline.exec();
-}
-
-async function setDashboard () {
-
-    let dashboard = new Object();
-
-    let providers = await redisScan({cursor: 0, options: {MATCH: 'provider-*', COUNT: 1000}, output: []});
-    dashboard.providers = providers.length;
-
-    let mos = await redisScan({cursor: 0, options: {MATCH: 'mo-*', COUNT: 1000}, output: []});
-    dashboard.mos = mos.length;
-    
-    let ranks = await redis_client.ZCOUNT(`rank`, '-inf', '+inf');
-    dashboard.ranks = ranks;
-
-    // 86400000 = 1 day in milliseconds
-    let log_history = new Object();
-    for (let i = 0; i < 14; i++){
-
-        let result = await postgres_client.query(`SELECT to_timestamp(date/1000)::date AS log_date, status || ': ' || count(status) as count FROM log_history WHERE to_timestamp(date/1000)::date > '${getYmdDate(new Date())}'::date - interval '14 days' GROUP BY log_date, status`);
-
-        result.rows.forEach((row) => {
-            if (log_history[row.log_date] == undefined) log_history[row.log_date] = new Object();
-            log_history[row.log_date][row.count.split(':')[0]] = row.count.split(':')[1];
-        });
-    }
-
-    dashboard.log_history = log_history;
-
-    let log_mo = await postgres_client.query(`SELECT * FROM log_mo WHERE message = 'New MO' ORDER BY id desc LIMIT 3;`);
-
-    dashboard.log_mo = log_mo.rows;
-
-    let ranked_by_provider = await postgres_client.query(`SELECT COUNT (*), provider AS code from log_history GROUP BY provider ORDER BY count`);
-
-    dashboard.ranked_by_provider = ranked_by_provider.rows;
-
-    let error_logs = await postgres_client.query(`SELECT COUNT (*) FROM log_history WHERE "message" = 'Could not insert history'`);
-    dashboard.error_logs = parseInt(error_logs.rows[0].count);
-
-    error_logs = await postgres_client.query(`SELECT COUNT (*) FROM log_mo WHERE status = 'error'`);
-    dashboard.error_logs += parseInt(error_logs.rows[0].count);
-
-    error_logs = await postgres_client.query(`SELECT COUNT (*) FROM log_provider WHERE status = 'error'`);
-    dashboard.error_logs += parseInt(error_logs.rows[0].count);
-
-    await redis_client.SET(`dashboard`, JSON.stringify(dashboard));
-}
-
-async function main () {
-    
-    // return;
+(async function main () {
 
     console.log(`${new Date().toLocaleTimeString()} - Loading instance ${instance}...`);
 
-    await connectToPostgres();
-    await connectToRedis();
+    if (instance != 1){
+     
+        while (true){
 
-    if (instance != 1) while (true){
+            await utils.sleep(10);
 
-        await sleep(10000).then(() => {});
+            let loaded = await redis_client.GET(`loaded`);
 
-        let loaded = await redis_client.GET(`loaded`);
+            if (loaded == 'true')
+                break;
 
-        if (loaded == 'true') break;
-
-        if (instance == 2)
-            console.log(`${new Date().toLocaleTimeString()} - Waiting for app to load on instance 1...`)
+            if (instance == 2)
+                console.log(`${new Date().toLocaleTimeString()} - Waiting for app to load on instance 1...`);
+        }
     }
 
     else {
 
+        console.log(`${new Date().toLocaleTimeString()} - Loading app on instance 1...`);
+
         await redis_client.SET(`loaded`, 'false');
 
         let startTimer = Date.now();
-        await startApp();
+        await controller.startApp();
+        startTimer = (Date.now() - startTimer).format(-seconds, 'second');
 
         let dashboardTimer = Date.now();
-        // await setDashboard();
+        await controller.setDashboard();
+        dashboardTimer = (Date.now() - dashboardTimer).format(-seconds, 'second');
 
         await redis_client.SET(`loaded`, `true`);
 
-        console.log(`${new Date().toLocaleTimeString()} - App loaded in ${Date.now() - startTimer}ms. Dashboard loaded in ${Date.now() - dashboardTimer}ms.`);
+        console.log(`${new Date().toLocaleTimeString()} - App loaded in ${startTimer}. Dashboard loaded in ${dashboardTimer}.`);
     }
 
     console.log(`${new Date().toLocaleTimeString()} - Instance ${instance} loaded.`);
 
-    while (true){
+    while (true) {
 
-        // let providers = await redis_client.LLEN(`providers`);
+        const has_priority_task = await redis_client.SCARD(`priority-task`) > 0;
 
-        // if (providers > 0) {
-        //     await persistProviders();
-        //     continue;
-        // }
+        if (has_priority_task) {
+            const task = await redis_client.SPOP(`priority-task`);
 
-        let operations = await redis_client.SCARD(`operations`);
-
-        if (operations > 0) {
-            await manageOperations(await redis_client.SPOP(`operations`));
+            await controller.manageTasks(task);
             continue;
         }
 
-        let sms = await redis_client.LLEN(`sms-ranking-${instance}`);
+        const has_sms_to_rank = await redis_client.LLEN(`sms-ranking-${instance}`) > 0;
 
-        if (sms > 0) {
+        if (has_sms_to_rank) {
             let timer = Date.now();
             
             console.log(`${new Date().toLocaleTimeString()} - Processing ${sms} SMS on instance ${instance}...`)
-            await processSms();
+            await controller.processSms();
             
-            console.log(`${new Date().toLocaleTimeString()} - Time took to process ${sms} SMS on instance ${instance}: ${Date.now() - timer}ms`);
-            continue;
-        }
-
-        let mo_to_postgres = await redis_client.SCARD(`mo-to-postgres`);
-
-        if (mo_to_postgres > 0){
-
-            let timer = Date.now();
-            await persistMo();
-            
-            console.log(`${new Date().toLocaleTimeString()} - Time took to persist ${mo_to_postgres} MOs on instance ${instance}: ${Date.now() - timer}`);
-            continue;
-        }
-
-        let log_history = await redis_client.LLEN(`log-history-${instance}`);
-        let log_provider = await redis_client.LLEN(`log-provider-${instance}`);
-        let log_mo = await redis_client.LLEN(`log-mo-${instance}`);
-
-        let timer = Date.now();
-
-        if (log_history > 0)
-            await persistLogHistory();
-
-        if (log_provider > 0)
-            await persistLogProvider();
-
-        if (log_mo > 0)
-            await persistLogMo();
-
-        if (log_history + log_provider + log_mo > 0) {
-            console.log(`${new Date().toLocaleTimeString()} - Time took to persist logs ${log_history + log_provider + log_mo} on instance ${instance}: ${Date.now() - timer}ms.`);
+            timer = (Date.now() - timer).format(-seconds, 'second');
+            console.log(`${new Date().toLocaleTimeString()} - Time took to process ${sms} SMS on instance ${instance}: ${timer}.`);
             continue;
         }
         
         console.log(`${new Date().toLocaleTimeString()} - No SMS to rank or data to persist on instance ${instance}. Sleeping...`);
-        await sleep(30000).then(() => {});
+        await utils.sleep(config.delay);
     }
-}
-
-main();
+})();
