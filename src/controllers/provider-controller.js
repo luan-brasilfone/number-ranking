@@ -1,3 +1,7 @@
+const _ = require('underscore');
+const utils = require('../scripts/utils');
+const redis_client = require('../db/redis');
+
 exports.getProviders = async (req, res) => {
 
 	const code = req.params.code;
@@ -6,13 +10,7 @@ exports.getProviders = async (req, res) => {
 
 		console.log(`${new Date().toLocaleTimeString()} - Getting providers`);
 
-		let providers = await redisScan({ options: {MATCH: 'provider-*', COUNT: '1000'} });
-
-		Object.keys(providers).forEach(key => {
-			providers[key.replace('provider-', '')] = providers[key];
-			delete providers[key];
-		});
-
+		let providers = await redis_client.HGETALL(`provider`);
 		return res.json(providers);
 	}
 	
@@ -22,7 +20,7 @@ exports.getProviders = async (req, res) => {
 
 	if (provider == null) return res.jsonResponse('No provider found');
 
-	return res.json(await provider);
+	return res.json(JSON.parse(provider));
 };
 
 exports.saveProvider = async (req, res) => {
@@ -47,11 +45,12 @@ exports.saveProvider = async (req, res) => {
 	
 	for (const field in fields) {
 
-		const is_required 	= (_.isUndefined(body[field]) || _.isNull(body[field]) || _.isEmpty(body[field].toString())) && fields[field].required;
-		const use_default 	=  _.isUndefined(body[field]) || _.isNull(body[field]);
-		const is_string 	= 	 fields[field].type == 'string';
-		const is_not_int 	= 	!Number.isInteger(body[field]);
-		const invalid_range =   (body[field] < 0 || body[field] > 100);
+		const is_required = (_.isUndefined(body[field]) || _.isNull(body[field]) || _.isEmpty(body[field].toString()))
+							&& fields[field].required;
+		const use_default = _.isUndefined(body[field]) || _.isNull(body[field]);
+		const is_string = fields[field].type == 'string';
+		const is_not_int = !Number.isInteger(body[field]);
+		const invalid_range = (body[field] < 0 || body[field] > 100);
 
 		if (is_required)
 			return res.jsonResponse(`Field ${field} is required`);
@@ -60,9 +59,9 @@ exports.saveProvider = async (req, res) => {
 			body[field] = fields[field].default;
 		
 		if (is_string)
-		  	{ row[field] = body[field]; continue; }
+		  	continue;
 
-		if (is_not_integer)
+		if (is_not_int && !use_default)
 			return res.jsonResponse(`Field ${field} must be an integer`);
 
 		if (invalid_range)
@@ -71,12 +70,12 @@ exports.saveProvider = async (req, res) => {
 		row[field] = body[field];
 	}
 
-	let providers = await redisScan({ options: {MATCH: 'provider-*', COUNT: '1000'} });
+	let providers = await redis_client.HGETALL(`provider`);
 
 	if (providers){
 
-		const invalid_insert =  	 providers[`provider-${body.code}`] && method == 'POST';
-		const invalid_update = 		!providers[`provider-${body.code}`] && method == 'PUT';
+		const invalid_insert = providers[body.code] && method == 'POST';
+		const invalid_update = !providers[body.code] && method == 'PUT';
 
 		if (invalid_insert)
 			return res.jsonResponse('Provider code is already registered');
@@ -84,8 +83,6 @@ exports.saveProvider = async (req, res) => {
 		if (invalid_update)
 			return res.jsonResponse('Provider code is not registered');
 	}
-
-	if (providers == null) providers = new Object();
 
 	await redis_client.HSET(`provider`, body.code, JSON.stringify(row));
 

@@ -1,3 +1,5 @@
+const redis_client = require('../db/redis');
+
 function sleep(seconds) {
 	return new Promise(resolve => setTimeout(resolve, seconds * 1000));
 }

@@ -1,3 +1,8 @@
+const globals = require('../../config/globals');
+
+const redis_client = require('../db/redis');
+const postgres_client = require('../db/postgres');
+
 exports.getRank = async (req, res) => {
 
 	const number = req.params.number;
@@ -16,9 +21,9 @@ exports.getRank = async (req, res) => {
 
 exports.addToRank = async (req, res) => {
 	
-	const sms = req.body.sms;
-
-	let instance = Math.ceil(Math.random() * global.instances);
+	const sms = req.body;
+	
+	let instance = Math.ceil(Math.random() * globals.instances);
 
 	redis_client.RPUSH(`sms-ranking-${instance}`, JSON.stringify(sms));
 };

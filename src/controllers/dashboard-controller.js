@@ -1,8 +1,10 @@
+const redis_client = require('../db/redis');
+
 exports.getDashboard = async (req, res) => {
 
 	let dashboard = await redis_client.GET('dashboard');
 
-	return dashboard;
+	return res.json(dashboard);
 };
 
 exports.setDashboard = async (req, res) => {

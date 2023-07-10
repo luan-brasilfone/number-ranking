@@ -1,1 +1,3 @@
-global.instances = process.env.APP_INSTANCES || 1;
+module.exports = {
+    instances: process.env.APP_INSTANCES || 1,
+};
