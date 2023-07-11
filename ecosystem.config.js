@@ -43,7 +43,7 @@ for (let instance = 1; instance <= config.app_instances; instance++) {
         script: app_script,
         autorestart: app_autorestart,
         watch: app_watch,
-        args: instance,
+        args: [instance],
     });
 }
 

@@ -26,6 +26,8 @@ exports.addToRank = async (req, res) => {
 	let instance = Math.ceil(Math.random() * globals.instances);
 
 	redis_client.RPUSH(`sms-ranking-${instance}`, JSON.stringify(sms));
+
+	res.jsonResponse("SMS added to ranking");
 };
 
 exports.getNumbers = async (req, res) => {

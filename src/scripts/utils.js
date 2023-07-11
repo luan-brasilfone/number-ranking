@@ -4,6 +4,14 @@ exports.sleep = seconds => {
 	return new Promise(resolve => setTimeout(resolve, seconds * 1000));
 }
 
+exports.formatTime = time => {
+
+	if (time > 1000)
+		return (time / 1000) + ' seconds';
+	
+	return time + ' ms';
+}
+
 exports.getYmdDate = date => {
 
     let year = date.getFullYear();
