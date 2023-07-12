@@ -59,7 +59,7 @@ const controller = require('./controllers/app-controller');
         if (has_priority_task) {
             const task = await redis_client.SPOP(`priority-task`);
 
-            await controller.manageTasks(task);
+            await controller.executeOnInstance(instance, 'manageTasks', [task]);
             continue;
         }
 

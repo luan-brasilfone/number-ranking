@@ -485,10 +485,10 @@ exports.setDashboard = async () => {
 
 exports.startApp = async () => {
 
-    // Only used once dependencies
     const ioredis = require('ioredis');
     const redis = new ioredis();
-    const pipeline = redis.pipeline();
+    const cursors = new Object();
+    let counter = 0;
 
     // DELETE
     await redis_client.DEL(`provider`);
@@ -522,50 +522,67 @@ exports.startApp = async () => {
     }
 
     let query = `SELECT COUNT(*), split_part(number_provider, '_', 1) as number FROM history GROUP BY number`;
-    const number_sms_counter_wrapper = await postgres_client.query(query);
+    let number_sms_counter_wrapper = await postgres_client.query(query);
     const sms_counter = new Object();
 
     for (row of number_sms_counter_wrapper.rows) {
         sms_counter[row.number] = row.count;
+        delete row;
     }
-    delete number_sms_counter_wrapper;
+    number_sms_counter_wrapper = undefined;
+
+    while (true) {
+
+        const pipeline = new ioredis.Pipeline(redis);
+
+        let clause = {
+            select: `COUNT(*), split_part(number_provider, '_', 1) || '~' || split_part(number_provider, '_', 2) as id,
+                     sum( (sms->'peso')::integer )`,
+            from: `history`,
+            group_by: `id`,
+            order_by: `2`,
+            limit: `500000`,
+            offset: `${counter * 500000}`
+        };
+
+        query = `SELECT ${clause.select} FROM ${clause.from} GROUP BY ${clause.group_by} ORDER BY ${clause.order_by} LIMIT ${clause.limit} OFFSET ${clause.offset}`;
+        
+        let history = await postgres_client.query(query);
+
+        if (history.rows.length == 0)
+            break;
+
+        while (history.rows.length){
+
+            const row = history.rows.pop();
+            const [number, provider] = row.id.split('~');
+            
+            const cursor = cursors[number] || { total: 0, sms_counter: 0 };
+
+            cursor.total += parseInt(row.sum), cursor.sms_counter += parseInt(row.count);
+            cursor[provider] = { total: row.count, statement: "insert" };
+
+            if (cursor.sms_counter == sms_counter[number]) {
+
+                pipeline.hset(`cursor`, { [number]: JSON.stringify(cursor) });
+                pipeline.zadd(`rank`, Math.floor(cursor.total / cursor.sms_counter), number);
+
+                delete cursors[number];
+            }
+            else {
+                cursors[number] = cursor;
+            }
+        }
     
-    let clause = {
-        select: `COUNT(*), split_part(number_provider, '_', 1) || '_' || split_part(number_provider, '_', 2) as id,
-                 sum( (sms->'peso')::integer )`,
-        from: `history`,
-        group_by: `id`,
-        order_by: `count desc`
-    };
-    query = `SELECT ${clause.select} FROM ${clause.from} GROUP BY ${clause.group_by} ORDER BY ${clause.order_by}`;
-
-    const history = await postgres_client.query(query);
-    const cursors = new Object();
-
-    history.rows.forEach(row => {
-
-        const [number, provider] = row.id.split('_');
-        const cursor = cursors[number] || { total: 0, sms_counter: 0 };
-
-        cursor.total += parseInt(row.sum), cursor.sms_counter += parseInt(row.count);
-        cursor[provider] = { total: row.count, statement: "insert" };
-
-        if (cursor.sms_counter == sms_counter[number]) {
-
-            pipeline.hset(`cursor`, { [number]: JSON.stringify(cursor) });
-            pipeline.zadd(`rank`, { score: Math.floor(cursor.total / cursor.sms_counter), value: number });
-            delete cursors[number];
-        }
-        else {
-            cursors[number] = cursor;
-        }
-    });
-
-    await pipeline.exec();
+        counter++;
+        await pipeline.exec();
+    }
 }
 
-exports.executeOnInstance = async (instance, method) => {
+exports.executeOnInstance = async (instance, method, input) => {
 
     this.instance = instance;
-    await this[method]();
+    input = input || [];
+    const output = await this[method]("'" + input.join("','") + "'");
+    return output;
 }
