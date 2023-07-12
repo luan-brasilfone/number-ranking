@@ -30,3 +30,6 @@ Dockerfile
 
 # REST client
 *.rest
+
+# Simulation files
+common

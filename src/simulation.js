@@ -5,17 +5,22 @@ const controller = require('./controllers/simulation-controller');
 
 (function main () {
 
-    if (!controller.checkProviders()) {
+    const providers_doesnt_exist = !controller.checkProviders();
+    const numbers_doesnt_exist = !controller.checkNumbers();
+
+    if (providers_doesnt_exist) {
+        console.log(`${new Date().toLocaleTimeString()} - Generating providers...`)
         controller.generateProviders();
         controller.postProviders();
     }
 
-    if (controller.checkNumbers()) {
+    if (numbers_doesnt_exist) {
+        console.log(`${new Date().toLocaleTimeString()} - Generating numbers ...`)
         controller.generateNumbers();
     }
 
     setInterval(() => {
-        const sms_list = controller.generateSMS();
-        controller.postNumbers(sms_list);
-    }, config.min_delay + Math.floor(Math.random() * config.max_delay));
+        const sms_list = controller.generateSmsList();
+        controller.postSmsList(sms_list);
+    }, 2000);
 })();
