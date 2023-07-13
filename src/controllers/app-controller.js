@@ -167,7 +167,7 @@ exports.manageTasks = async (task) => {
     }
 }
 
-exports.hasMo = async (sms, cursor) => {
+exports.hasMo = async (sms, cursor, provider_leverage) => {
 
     let mo = await redis_client.HGET(`mo`, sms.numero);
     const has_new_mo = mo == null && sms.status.toLowerCase() == 'mo';
@@ -218,6 +218,8 @@ exports.hasMo = async (sms, cursor) => {
                 console.error(error);
             }
         }
+
+        [sms.peso, sms.pesoFornecedor] = [100, provider_leverage];
 
         await this.persistSms(sms, cursor);
 
@@ -310,6 +312,16 @@ exports.persistSms = async (sms, cursor) => {
         await this.updateCursor(sms, cursor);
 
         try {
+            await redis_client.ZADD(`rank`, {score: Math.floor(cursor.total/cursor.sms_counter), value: sms.numero});
+        }
+        catch (error) {
+
+            console.log(`${new Date().toLocaleTimeString()} - Could not update rank for ${sms.numero}... Skipping...`);
+            console.error(error);
+            console.log('sms', sms, 'cursor', cursor);
+        }
+
+        try {
             let log = {
                 type: 'history',
                 number: sms.numero,
@@ -324,15 +336,6 @@ exports.persistSms = async (sms, cursor) => {
         }
         catch (error) {
             console.error(`${new Date().toLocaleTimeString()} - Could not log history for ${sms.numero} on ${sms.fornecedor}... Skipping...`);
-            console.error(error);
-        }
-
-        try {
-            await redis_client.ZADD(`rank`, {score: Math.floor(cursor.total/cursor.sms_counter), value: sms.numero});
-        }
-        catch (error) {
-    
-            console.log(`${new Date().toLocaleTimeString()} - Could not update rank for ${sms.numero}... Skipping...`);
             console.error(error);
         }
     }
@@ -375,7 +378,7 @@ exports.rankSms = async (sms) => {
     cursor[sms.fornecedor] = cursor[sms.fornecedor] || {"total": 0, "statement": "insert"};
     
     const provider_leverage = provider[sms.status.toLowerCase()];
-    const has_mo = await this.hasMo(sms, cursor);
+    const has_mo = await this.hasMo(sms, cursor, provider_leverage);
     
     if (has_mo)
         return 100;
@@ -391,7 +394,7 @@ exports.rankSms = async (sms) => {
     return rank;
 }
 
-exports.processSms = async () => {
+exports.processSmsList = async () => {
 
     while (true) {
 

@@ -70,7 +70,7 @@ const controller = require('./controllers/app-controller');
             let timer = Date.now();
             
             console.log(`${new Date().toLocaleTimeString()} - Processing ${sms_quantity} SMS on instance ${instance}...`)
-            await controller.executeOnInstance(instance, 'processSms');
+            await controller.executeOnInstance(instance, 'processSmsList');
             
             timer = utils.formatTime(Date.now() - timer);
             console.log(`${new Date().toLocaleTimeString()} - Time took to process ${sms_quantity} SMS on instance ${instance}: ${timer}.`);
