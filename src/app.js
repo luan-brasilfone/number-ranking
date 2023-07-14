@@ -5,13 +5,11 @@ const utils = require('./scripts/utils');
 
 const redis_client = require('./db/redis');
 
-let instance = 1;
-if (process.argv[2])
-    instance = process.argv[2];
-
 const controller = require('./controllers/app-controller');
 
-(async function main () {
+let instance = process.argv[2] || 1;
+
+exports.main = async () => {
 
     console.log(`${new Date().toLocaleTimeString()} - Loading instance ${instance}...`);
 
@@ -30,6 +28,7 @@ const controller = require('./controllers/app-controller');
         await controller.executeOnInstance(instance, 'setDashboard');
         dashboardTimer = utils.formatTime(Date.now() - dashboardTimer);
 
+        await redis_client.HSET(`config`, { app: JSON.stringify({ delay: config.delay }) });
         await redis_client.SET(`loaded`, `true`);
 
         console.log(`${new Date().toLocaleTimeString()} - App started in ${startTimer}. Dashboard loaded in ${dashboardTimer}.`);
@@ -64,6 +63,17 @@ const controller = require('./controllers/app-controller');
             continue;
         }
 
+        const has_new_config = await redis_client.SISMEMBER(`set-config`, `app`);
+
+        if (has_new_config) {
+            const config = await redis_client.HGET(`config`, `app`);
+            await redis_client.SREM(`set-config`, `app`);
+
+            console.log(`${new Date().toLocaleTimeString()} - Updating config on instance ${instance}...`);
+            await controller.executeOnInstance(instance, 'setConfig', [config]);
+            continue;
+        }
+
         const sms_quantity = await redis_client.LLEN(`sms-ranking-${instance}`);
         const has_sms_to_rank = sms_quantity > 0;
 
@@ -71,7 +81,7 @@ const controller = require('./controllers/app-controller');
             let timer = Date.now();
             
             console.log(`${new Date().toLocaleTimeString()} - Processing ${sms_quantity} SMS on instance ${instance}...`)
-            await controller.executeOnInstance(instance, 'processSmsList');
+            await controller.executeOnInstance(instance, 'processSmsList', [sms_quantity]);
             
             timer = utils.formatTime(Date.now() - timer);
             console.log(`${new Date().toLocaleTimeString()} - Time took to process ${sms_quantity} SMS on instance ${instance}: ${timer}.`);
@@ -102,4 +112,6 @@ const controller = require('./controllers/app-controller');
         console.log(`${new Date().toLocaleTimeString()} - No SMS to rank or data to persist on instance ${instance}. Sleeping...`);
         await utils.sleep(config.delay);
     }
-})();
+};
+
+this.main();

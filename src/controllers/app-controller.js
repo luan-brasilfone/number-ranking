@@ -453,7 +453,9 @@ exports.rankSms = async (sms) => {
     return rank;
 }
 
-exports.processSmsList = async () => {
+exports.processSmsList = async (quantity) => {
+
+    let counter = 0;
 
     while (true) {
 
@@ -467,7 +469,7 @@ exports.processSmsList = async () => {
         }
 
         let sms = await redis_client.LPOP(`sms-ranking-${this.instance}`);
-        const finished_processing = sms === null;
+        const finished_processing = counter == quantity;
         
         if (finished_processing)
             break;
@@ -479,6 +481,8 @@ exports.processSmsList = async () => {
 
         if (provider_not_found)
             console.log(`${new Date().toLocaleTimeString()} - Provider ${sms.fornecedor} not found. Skipping...`);
+
+        counter++;
     }
 }
 
@@ -603,8 +607,8 @@ exports.startApp = async () => {
             from: `history`,
             group_by: `id`,
             order_by: `2`,
-            limit: `500000`,
-            offset: `${counter * 500000}`
+            limit: `1000000`,
+            offset: `${counter * 1000000}`
         };
 
         query = `SELECT ${clause.select} FROM ${clause.from} GROUP BY ${clause.group_by} ORDER BY ${clause.order_by} LIMIT ${clause.limit} OFFSET ${clause.offset}`;
@@ -638,6 +642,20 @@ exports.startApp = async () => {
     
         counter++;
         await pipeline.exec();
+    }
+}
+
+exports.setConfig = async (config) => {
+
+    config = JSON.parse(config);
+
+    const keys = Object.keys(config);
+
+    for (let i = 0; i < keys.length; i++) {
+            
+        const [key, value] = [keys[i], config[keys[i]]];
+
+        config[key] = value;
     }
 }
 

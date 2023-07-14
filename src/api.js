@@ -10,6 +10,8 @@ const ranking_controller = require('./controllers/ranking-controller');
 const provider_controller = require('./controllers/provider-controller');
 const dashboard_controller = require('./controllers/dashboard-controller');
 
+const config_controller = require('./controllers/config-controller');
+
 api.use(body_parser.urlencoded({ extended: false }));
 api.use(body_parser.json());
 api.use(json_response);
@@ -30,6 +32,9 @@ api.delete('/providers/:code?', provider_controller.deleteProvider);
 // Dashboard
 api.get('/dashboard', dashboard_controller.getDashboard);
 api.put('/dashboard', dashboard_controller.setDashboard);
+
+// Config
+api.post('/config', config_controller.setConfig);
 
 api.listen(config.port, config.host, () => {});
 

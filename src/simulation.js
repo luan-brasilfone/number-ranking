@@ -18,7 +18,7 @@ exports.getDelay = (min, max) => {
     return delay;
 }
 
-(async function main () {
+exports.main = async () => {
 
     const providers_doesnt_exist = !controller.checkProviders();
     const numbers_doesnt_exist = !controller.checkNumbers();
@@ -34,7 +34,26 @@ exports.getDelay = (min, max) => {
         controller.generateNumbers();
     }
 
+    // Configurable fields: ['min_delay', 'max_delay', 'sms_quantity', 'log_responses']
+    // Actual fields: ['min_delay', 'max_delay', 'sms_quantity', 'log_responses', 'numbers_quantity', 'providers_quantity']
+    let { new_config, numbers_quantity, providers_quantity } = { ...config };
+
     while (true) {
+
+        const has_new_config = await redis_client.SISMEMBER(`set-config`, `simulation`);
+
+        if (has_new_config) {
+            const new_config = await redis_client.HGET(`config`, `simulation`);
+            await redis_client.SREM(`set-config`, `simulation`);
+
+            console.log(`${new Date().toLocaleTimeString()} - Updating config on simulation...`);
+
+            new_config = JSON.parse(new_config);
+
+            config = {...config, ...new_config};
+            controller.setConfig(new_config);
+            continue;
+        }
 
         const delay = exports.getDelay(config.min_delay, config.max_delay);
         
@@ -54,4 +73,6 @@ exports.getDelay = (min, max) => {
 
         await utils.sleep(delay);
     }
-})();
+};
+
+this.main();

@@ -11,14 +11,17 @@ exports.checkProviders = () => {
 
     // Check if providers.json is empty
     if (fs.readFileSync('./common/providers.json').length === 0) return false;
-
+    
     // Check if providers.json is valid JSON
     try {
-        JSON.parse(fs.readFileSync('./common/providers.json'));
+        const providers = JSON.parse(fs.readFileSync('./common/providers.json'));
     }
     catch (error) {
         return false;
     }
+
+    // Check if providers.json is according to .env's providers_quantity
+    if (Object.keys(providers).length !== config.providers_quantity) return false;
 
     return true;
 };
@@ -77,7 +80,15 @@ exports.checkNumbers = () => {
     if (fs.readFileSync('./common/numbers.txt').length === 0) return false;
 
     // Check if numbers.txt is in format Number|Leverage
-    let numbers = fs.readFileSync('./common/numbers.txt').toString().split('\n');
+    try {
+        const numbers = fs.readFileSync('./common/numbers.txt').toString().split('\n');
+    }
+    catch (error) {
+        return false;
+    }
+
+    // Check if numbers.txt is according to .env's numbers_quantity
+    if (numbers.length !== config.numbers_quantity) return false;
 
     for (let number of numbers) {
         if (number.split('|').length !== 2) return false;
@@ -168,3 +179,8 @@ exports.postSmsList = (sms_list) => {
     }
     return true;
 };
+
+exports.setConfig = (new_config) => {
+
+    config = {...config, ...new_config};
+}
