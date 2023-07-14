@@ -1,85 +1,50 @@
-const fs = require('fs');
+require('dotenv').config();
 
-const env_path = '/home/luan/Documents/NumberRanking/node/.env';
-const env = getEnv();
+const config = require('./config/ecosystem');
 
-const database_config = {
-    host: env['database_host'],
-    port: env['database_port'],
-    database: env['database_name'],
-    user: env['database_user'],
-    password: env['database_password'],
-}
+const start_simulation = (config.start_simulation == 'yes' || config.start_simulation == 'y');
 
-const redis_config = {
-    host: env['redis_host'],
-    port: env['redis_port']
-}
+const api_watch        = (config.api_watch == 'yes' || config.api_watch == 'y');
+const app_watch        = (config.app_watch == 'yes' || config.app_watch == 'y');
+const simulation_watch = (config.simulation_watch == 'yes' || config.simulation_watch == 'y');
 
-let ecosystem = new Object();
-ecosystem.apps = [];
+const api_autorestart        = (config.api_autorestart != 'no' && config.api_autorestart != 'n');
+const app_autorestart        = (config.app_autorestart != 'no' && config.app_autorestart != 'n');
+const simulation_autorestart = (config.simulation_autorestart != 'no' && config.simulation_autorestart != 'n');
 
-let api_autorestart = env['api_autorestart'].toLowerCase();
+const api_script        = `${config.base_dir}/src/${config.api_script}`;
+const app_script        = `${config.base_dir}/src/${config.app_script}`;
+const simulation_script = `${config.base_dir}/src/${config.simulation_script}`;
 
-let api_env = {
-    api_host: env['api_host'],
-    api_port: env['api_port'],
-    database_config: database_config,
-    redis_config: redis_config
+let ecosystem  = new Object();
+ecosystem.apps = new Array();
+
+const api_instance = {
+    name: config.api_name,
+    script: api_script,
+    autorestart: api_autorestart,
+    watch: api_watch,
 };
 
-let api_instance = {
-    name: env['api_name'],
-    script: `${env['app_base_dir']}/${env['api_script']}`,
-    autorestart: (api_autorestart != 'no' && api_autorestart != 'n'),
-    watch: true,
-    args: `${env['app_instances']} '${JSON.stringify(api_env)}'`,
+const simulation_instance = {
+    name: config.simulation_name,
+    script: simulation_script,
+    autorestart: simulation_autorestart,
+    watch: simulation_watch,
 };
 
-let tonelada_instance = {
-    name: 'tonelada',
-    script: `${env['app_base_dir']}/tonelada.php`,
-    autorestart: (api_autorestart != 'no' && api_autorestart != 'n'),
-    watch: true,
-};
-
+if (start_simulation)
+ecosystem.apps.push(simulation_instance);
 ecosystem.apps.push(api_instance);
-ecosystem.apps.push(tonelada_instance);
 
-let app_autorestart = env['app_autorestart'].toLowerCase();
-
-let app_env = {
-    app_base_dir: env['app_base_dir'],
-    database_config: database_config,
-    redis_config: redis_config
-}
-
-for (let i = 1; i <= env['app_instances']; i++) {
+for (let instance = 1; instance <= config.app_instances; instance++) {
     ecosystem.apps.push({
-        name: `${env['app_name']}-${i}`,
-        script: `${env['app_base_dir']}/${env['app_script']}`,
-        autorestart: (app_autorestart != 'no' && app_autorestart != 'n'),
-        watch: true,
-        args: `${i} '${JSON.stringify(app_env)}'`,
+        name: `${config.app_name}-${instance}`,
+        script: app_script,
+        autorestart: app_autorestart,
+        watch: app_watch,
+        args: [instance],
     });
-}
-
-function getEnv () {
-
-    let env_file = fs.readFileSync(env_path, 'utf8');
-    const env_lines = env_file.split('\n');
-    const env_variables = {};
-  
-    for (const line of env_lines) {
-      const trimmed_line = line.trim();
-  
-      if (trimmed_line && !trimmed_line.startsWith('#')) {
-        const [key, value] = trimmed_line.split('=');
-        env_variables[key.toLowerCase()] = value;
-      }
-    }
-
-    return env_variables;
 }
 
 module.exports = ecosystem;
