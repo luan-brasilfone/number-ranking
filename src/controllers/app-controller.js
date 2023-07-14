@@ -3,6 +3,8 @@ const utils = require('../scripts/utils');
 const redis_client = require('../db/redis');
 const postgres_client = require('../db/postgres');
 
+const log_controller = require('./log-controller');
+
 exports.reSyncCursor = async (number) => {
 
     try {
@@ -147,6 +149,49 @@ exports.persistProviders = async () => {
     }
 }
 
+exports.persistMo = async () => {
+
+    while (true) {
+
+        const number = await redis_client.SPOP(`mo-to-postgres`);
+
+        if (number == null)
+            break;
+
+        const mo = await redis_client.HGET(`mo`, number);
+
+        if (mo == null)
+            continue;
+
+        const clause = {
+            insert_into: `mo ("number", "balance", "date")`,
+            values: `('${number}', '${mo}', '${utils.getYmdDate(new Date())}')`,
+            on_conflict: `number`,
+            do_update: `SET balance = ${mo}, date = '${utils.getYmdDate(new Date())}'`
+        };
+        const query = `INSERT INTO ${clause.insert_into} VALUES ${clause.values} ON CONFLICT (${clause.on_conflict}) DO UPDATE ${clause.do_update}`;
+
+        try {
+            await postgres_client.query(query);
+        }
+        catch (error) {
+            console.error(`${new Date().toLocaleTimeString()} - Could not insert MO for ${number}... Skipping...`);
+            console.error(error);
+
+            let log = {
+                type: 'mo',
+                number: number,
+                provider: 'unknown',
+                status: 'error',
+                date: new Date().getTime(),
+                message: `Could not insert MO`
+            };
+    
+            await redis_client.RPUSH(`log-mo-${instance}`, JSON.stringify(log));
+        }
+    }
+}
+
 exports.manageTasks = async (task) => {
 
     switch (task) {
@@ -162,6 +207,20 @@ exports.manageTasks = async (task) => {
             await this.persistProviders();
             break;
 
+        default:
+            break;
+    }
+}
+
+exports.persistData = async (data_type) => {
+
+    switch (data_type) {
+        case 'mo':
+            await this.persistMo();
+            break;
+        case 'log':
+            await log_controller.persist(this.instance);
+            break;
         default:
             break;
     }
@@ -583,9 +642,9 @@ exports.startApp = async () => {
 }
 
 exports.executeOnInstance = async (instance, method, input) => {
-
+ 
     this.instance = instance;
     input = input || [];
-    const output = await this[method]("'" + input.join("','") + "'");
+    const output = await this[method](input.join(','));
     return output;
 }

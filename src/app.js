@@ -22,7 +22,8 @@ const controller = require('./controllers/app-controller');
         await redis_client.SET(`loaded`, 'false');
 
         let startTimer = Date.now();
-        await controller.executeOnInstance(instance, 'startApp');
+        await utils.sleep(1);
+        // await controller.executeOnInstance(instance, 'startApp');
         startTimer = utils.formatTime(Date.now() - startTimer);
 
         let dashboardTimer = Date.now();
@@ -76,7 +77,28 @@ const controller = require('./controllers/app-controller');
             console.log(`${new Date().toLocaleTimeString()} - Time took to process ${sms_quantity} SMS on instance ${instance}: ${timer}.`);
             continue;
         }
-        
+
+        const has_mo_to_persist = await redis_client.SCARD(`mo-to-postgres`) > 0;
+        const has_logs_to_persist = await redis_client.LLEN(`log-history-${instance}`) > 0 ||
+                                    await redis_client.LLEN(`log-provider-${instance}`) > 0 ||
+                                    await redis_client.LLEN(`log-mo-${instance}`) > 0;
+
+        const has_data_to_persist = has_mo_to_persist || has_logs_to_persist;
+
+        if (has_data_to_persist) {
+
+            const data_type = has_mo_to_persist ? 'mo' : 'log';
+            let timer = Date.now();
+            
+            console.log(`${new Date().toLocaleTimeString()} - Persisting ${data_type} on instance ${instance}...`)
+
+            await controller.executeOnInstance(instance, 'persistData', [data_type]);
+
+            timer = utils.formatTime(Date.now() - timer);
+            console.log(`${new Date().toLocaleTimeString()} - Time took to persist ${data_type} on instance ${instance}: ${timer}.`);
+            continue;
+        }
+
         console.log(`${new Date().toLocaleTimeString()} - No SMS to rank or data to persist on instance ${instance}. Sleeping...`);
         await utils.sleep(config.delay);
     }
