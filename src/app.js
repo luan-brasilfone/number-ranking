@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-const config = require('../config/app');
+let config = require('../config/app');
 const utils = require('./scripts/utils');
 
 const redis_client = require('./db/redis');
@@ -25,10 +25,9 @@ exports.main = async () => {
         startTimer = utils.formatTime(Date.now() - startTimer);
 
         let dashboardTimer = Date.now();
-        await controller.executeOnInstance(instance, 'setDashboard');
+        // await controller.executeOnInstance(instance, 'setDashboard');
         dashboardTimer = utils.formatTime(Date.now() - dashboardTimer);
 
-        await redis_client.HSET(`config`, { app: JSON.stringify({ delay: config.delay }) });
         await redis_client.SET(`loaded`, `true`);
 
         console.log(`${new Date().toLocaleTimeString()} - App started in ${startTimer}. Dashboard loaded in ${dashboardTimer}.`);
@@ -50,6 +49,8 @@ exports.main = async () => {
         }
     }
 
+    await redis_client.HSET(`config`, { [`app-${instance}`]: JSON.stringify({ delay: config.delay }) });
+
     console.log(`${new Date().toLocaleTimeString()} - Instance ${instance} loaded.`);
 
     while (true) {
@@ -63,14 +64,21 @@ exports.main = async () => {
             continue;
         }
 
-        const has_new_config = await redis_client.SISMEMBER(`set-config`, `app`);
+        const has_new_config = await redis_client.SISMEMBER(`set-config`, `app-${instance}`);
 
         if (has_new_config) {
-            const config = await redis_client.HGET(`config`, `app`);
-            await redis_client.SREM(`set-config`, `app`);
+
+            let new_config = await redis_client.HGET(`config`, `app-${instance}`);
+            await redis_client.SREM(`set-config`, `app-${instance}`);
 
             console.log(`${new Date().toLocaleTimeString()} - Updating config on instance ${instance}...`);
+
+            new_config = JSON.parse(new_config);
+
+            config = {...config, ...new_config};
             await controller.executeOnInstance(instance, 'setConfig', [config]);
+
+            await redis_client.HSET(`config`, { [`app-${instance}`]: JSON.stringify(config) });
             continue;
         }
 

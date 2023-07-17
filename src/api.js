@@ -34,7 +34,8 @@ api.get('/dashboard', dashboard_controller.getDashboard);
 api.put('/dashboard', dashboard_controller.setDashboard);
 
 // Config
-api.post('/config', config_controller.setConfig);
+api.get('/config/:type?', config_controller.getConfig);
+api.put('/config', config_controller.setConfig);
 
 api.listen(config.port, config.host, () => {});
 

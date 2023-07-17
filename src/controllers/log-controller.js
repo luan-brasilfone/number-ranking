@@ -19,8 +19,6 @@ exports.persist = async function (instance) {
 
     if (has_mo_log)
         await this.persistMo(instance);
-
-    console.log(`${new Date().toLocaleTimeString()} - Instance ${instance} logs were persisted.`);
 }
 
 exports.persistHistory = async function (instance) {

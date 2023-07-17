@@ -1,4 +1,4 @@
-const config = require('../../config/app');
+let config = require('../../config/app');
 const utils = require('../scripts/utils');
 const redis_client = require('../db/redis');
 const postgres_client = require('../db/postgres');
@@ -645,18 +645,9 @@ exports.startApp = async () => {
     }
 }
 
-exports.setConfig = async (config) => {
+exports.setConfig = async (new_config) => {
 
-    config = JSON.parse(config);
-
-    const keys = Object.keys(config);
-
-    for (let i = 0; i < keys.length; i++) {
-            
-        const [key, value] = [keys[i], config[keys[i]]];
-
-        config[key] = value;
-    }
+    config = new_config;
 }
 
 exports.executeOnInstance = async (instance, method, input) => {

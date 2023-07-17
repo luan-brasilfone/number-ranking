@@ -1,18 +1,19 @@
 require('dotenv').config();
 
-const config = require('../config/simulation');
+let config = require('../config/simulation');
+const redis_client = require('./db/redis');
 
 const utils = require('./scripts/utils');
 const controller = require('./controllers/simulation-controller');
 
 exports.getDelay = (min, max) => {
 
-    if (min === max)
+    if (min >= max)
         return min;
 
-    const delay = parseInt(min) + parseInt(Math.ceil(Math.random() * max));
+    const delay = parseInt(min) + Math.ceil(Math.random() * max);
 
-    if (delay > max)
+    if (delay >= max)
         return max;
 
     return delay;
@@ -25,25 +26,25 @@ exports.main = async () => {
 
     if (providers_doesnt_exist) {
         console.log(`${new Date().toLocaleTimeString()} - Generating providers...`)
-        controller.generateProviders();
-        controller.postProviders();
+        // controller.generateProviders();
+        // controller.postProviders();
     }
 
     if (numbers_doesnt_exist) {
         console.log(`${new Date().toLocaleTimeString()} - Generating numbers ...`)
-        controller.generateNumbers();
+        // controller.generateNumbers();
     }
 
-    // Configurable fields: ['min_delay', 'max_delay', 'sms_quantity', 'log_responses']
-    // Actual fields: ['min_delay', 'max_delay', 'sms_quantity', 'log_responses', 'numbers_quantity', 'providers_quantity']
-    let { new_config, numbers_quantity, providers_quantity } = { ...config };
+    const { numbers_quantity, providers_quantity, ...configurable } = config;
+    await redis_client.HSET(`config`, { simulation: JSON.stringify(configurable) });
 
     while (true) {
 
         const has_new_config = await redis_client.SISMEMBER(`set-config`, `simulation`);
 
         if (has_new_config) {
-            const new_config = await redis_client.HGET(`config`, `simulation`);
+
+            let new_config = await redis_client.HGET(`config`, `simulation`);
             await redis_client.SREM(`set-config`, `simulation`);
 
             console.log(`${new Date().toLocaleTimeString()} - Updating config on simulation...`);
