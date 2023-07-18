@@ -20,14 +20,89 @@ exports.getRank = async (req, res) => {
 };
 
 exports.addToRank = async (req, res) => {
-	
-	const sms = req.body;
-	
-	let instance = Math.ceil(Math.random() * globals.instances);
 
-	redis_client.RPUSH(`sms-ranking-${instance}`, JSON.stringify(sms));
+	try{
+		const possible_platforms = ['BF', 'DP', 'KHOMP', 'MERA'];
+		const possible_statuses = ['s200', 's404', 's500', 's503', 'mo', 'default'];
 
-	res.jsonResponse("SMS added to ranking");
+		let sms = req.body;
+		let { numero, fornecedor, status, plataforma } = sms;
+
+		const some_field_is_missing = !numero || !fornecedor || !plataforma || !status;
+		const some_field_is_not_string = typeof numero + typeof fornecedor + typeof plataforma + typeof status != 'string'.repeat(4);
+
+		if (some_field_is_missing)
+			return res.jsonResponse("Some field is missing");
+
+		if (some_field_is_not_string)
+			return res.jsonResponse("Some field is not a string");
+
+		const status_is_invalid = !possible_statuses.includes(status);
+		const platform_is_invalid = !possible_platforms.includes(plataforma);
+		const provider_is_invalid = !await redis_client.HEXISTS('provider', fornecedor);
+		const number_is_invalid = !numero.match(/^55[1-9]{2}[0-9]{8}$/) && !numero.match(/^55[1-9]{2}9[0-9]{8}$/);
+
+		if (status_is_invalid) {
+
+			const fixed_number_status = 's' + status;
+			const fixed_named_status = status.toLowerCase();
+
+			if (possible_statuses.includes(fixed_number_status))
+				status = fixed_number_status;
+
+			if (possible_statuses.includes(fixed_named_status))
+				status = fixed_named_status;
+
+			const status_still_invalid = !possible_statuses.includes(status);
+
+			if (status_still_invalid)
+				return res.jsonResponse("Invalid status");
+		}
+
+		if (platform_is_invalid) {
+			
+			const fixed_platform = plataforma.toUpperCase();
+			const platform_still_invalid = !possible_platforms.includes(fixed_platform);
+
+			if (platform_still_invalid)
+				return res.jsonResponse("Invalid platform");
+
+			plataforma = fixed_platform;
+		}
+
+		if (provider_is_invalid) {
+
+			const fixed_provider = fornecedor.toLowerCase();
+			const provider_still_invalid = !await redis_client.HEXISTS('provider', fixed_provider);
+
+			if (provider_still_invalid)
+				return res.jsonResponse("Invalid provider");
+
+			fornecedor = fixed_provider;
+		}
+
+		if (number_is_invalid) {
+
+			const fixed_number = numero.replace(/[^0-9]/g, '');
+			const number_still_invalid = !fixed_number.match(/^55[1-9]{2}[0-9]{8}$/) && !fixed_number.match(/^55[1-9]{2}9[0-9]{8}$/);
+
+			if (number_still_invalid)
+				return res.jsonResponse("Invalid number");
+				
+			numero = fixed_number;
+		}
+		
+		sms = { numero: numero, fornecedor: fornecedor, plataforma: plataforma, status: status };
+			
+		let instance = Math.ceil(Math.random() * globals.instances);
+		redis_client.RPUSH(`sms-ranking-${instance}`, JSON.stringify(sms));
+
+		return res.jsonResponse("SMS added to ranking");
+	}
+	catch (error) {
+		console.error(error);
+		return res.jsonResponse("Something went wrong while adding SMS to rank");
+	}
 };
 
 exports.getNumbers = async (req, res) => {
