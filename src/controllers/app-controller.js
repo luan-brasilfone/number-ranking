@@ -418,7 +418,7 @@ exports.calculateRank = (number_average, provider_leverage, status) => {
     if (has_good_status){
 
         const leverage = (100 - provider_leverage) / 100;
-        rank = 50 + Math.round(number_average * (2 + leverage));
+        rank = provider_leverage + Math.round(number_average * (2 + leverage));
 
         if (rank > 100) rank = 100;
     }
@@ -517,7 +517,7 @@ exports.setDashboard = async () => {
             from: `log_history`,
             where: `to_timestamp(date/1000)::date = '${date}'::date - interval '${i} days'`,
             group_by: `log_date, status`
-        }
+        };
         const query = `SELECT ${clause.select} FROM ${clause.from} WHERE ${clause.where} GROUP BY ${clause.group_by}`;
 
         const result = await postgres_client.query(query);

@@ -21,7 +21,7 @@ exports.main = async () => {
 
         let startTimer = Date.now();
         // await utils.sleep(1);
-        await controller.executeOnInstance(instance, 'startApp');
+        // await controller.executeOnInstance(instance, 'startApp');
         startTimer = utils.formatTime(Date.now() - startTimer);
 
         let dashboardTimer = Date.now();
