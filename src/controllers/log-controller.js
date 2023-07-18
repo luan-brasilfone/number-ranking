@@ -1,5 +1,3 @@
-// This controller uses redis to persist logs
-
 const redis_client = require('../db/redis');
 const postgres_client = require('../db/postgres');
 

@@ -20,12 +20,12 @@ exports.main = async () => {
         await redis_client.SET(`loaded`, 'false');
 
         let startTimer = Date.now();
-        await utils.sleep(1);
-        // await controller.executeOnInstance(instance, 'startApp');
+        // await utils.sleep(1);
+        await controller.executeOnInstance(instance, 'startApp');
         startTimer = utils.formatTime(Date.now() - startTimer);
 
         let dashboardTimer = Date.now();
-        // await controller.executeOnInstance(instance, 'setDashboard');
+        await controller.executeOnInstance(instance, 'setDashboard');
         dashboardTimer = utils.formatTime(Date.now() - dashboardTimer);
 
         await redis_client.SET(`loaded`, `true`);

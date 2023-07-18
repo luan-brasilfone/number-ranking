@@ -10,38 +10,37 @@ exports.reSyncCursor = async (number) => {
     try {
 
         const clause = {
-            select: `*, split_part(number_provider, '_', 1) as provider`,
+            select: `*, split_part(number_provider, '_', 2) as provider`,
             from: `history`,
             where: `number_provider LIKE '${number}_%'`,
         }
         const query = `SELECT ${clause.select} FROM ${clause.from} WHERE ${clause.where}`;
 
         const history = await postgres_client.query(query);
-        const cursor = { total: 0, sms_counter: 0 };
+
+        if (history.rows.length == 0)
+            return;
+
+        const cursor = { to: 0, sc: 0 };
         
         history.rows.forEach((row) => {
 
             const provider = row.provider;
 
-            cursor[provider] = cursor[provider] || { total: 0, statement: "insert" };
+            cursor[provider] = cursor[provider] || { t: 0, s: "i" };
 
-            cursor.total += row.sms.peso;
-            if (cursor[provider].statement == "insert")
-                cursor.sms_counter++;
-            
-            cursor[provider].total++;
-            if (cursor[provider].total == 10)
-                cursor[provider] = { total: 0, statement: "update" };            
+            cursor.to += row.sms.peso;
+            cursor.sc++, cursor[provider].t++;   
         });
 
-        await redis_client.HSET(`cursor`, { [number]: JSON.stringify(cursors[number]) });
+        return cursor;
     }
     catch (error) {
         console.log(`${new Date().toLocaleTimeString()} - Could not re-sync cursor for ${number}... Re-trying in a few seconds...`);
         console.error(error);
 
         await utils.sleep(config.delay);
-        await this.reSyncCursor(number);
+        return await this.reSyncCursor(number);
     }
 }
 
@@ -291,29 +290,40 @@ exports.hasMo = async (sms, cursor, provider_leverage) => {
 exports.updateCursor = async (sms, cursor) => {
 
     try{
+        const [number, provider] = [sms.numero, sms.fornecedor];
 
-        if (cursor[sms.fornecedor].statement == "update"){
+        if (cursor[provider].s == "u"){
 
-            let old_leverage = await postgres_client.query(`SELECT sms FROM history WHERE number_provider = '${sms.numero}_${sms.fornecedor}_${cursor[sms.fornecedor]}'`);
+            let old_leverage = await postgres_client.query(`SELECT sms FROM history WHERE number_provider = '${number}_${provider}_${cursor[provider]}'`);
     
-            cursor.total -= old_leverage.rows[0].sms.peso;
+            cursor.to -= old_leverage.rows[0].sms.peso;
         }
 
-        cursor.total += sms.peso, cursor[sms.fornecedor].total++;
+        cursor.to += sms.peso, cursor[provider].t++;
         
-        if (cursor[sms.fornecedor].statement == "insert") cursor.sms_counter++;
+        if (cursor[provider].s == "i")
+            cursor.sc++;
 
-        if (cursor[sms.fornecedor].total == 10)
-            cursor[sms.fornecedor].total = 0, cursor[sms.fornecedor].statement = "update";            
-
-        await redis_client.HSET(`cursor`, { [sms.numero]: JSON.stringify(cursor) });
+        if (cursor[provider].t == 10)
+            cursor[provider].t = 0, cursor[provider].s = "u";            
     }
     catch (error){
         console.error(`${new Date().toLocaleTimeString()} - Could not update cursor for ${sms.numero} on ${sms.fornecedor}... Re-syncing...`);
         console.error(error);
 
-        await reSyncCursor(sms.numero);
+        cursor = await reSyncCursor(sms.numero);
     }
+
+    // If cursor memory limit is reached, persist cursor then removes a random one from hash
+    const memory_usage = await redis_client.MEMORY_USAGE(`cursor`) / 1024 / 1024;
+
+    if (memory_usage > config.cursor_memory_limit){
+            
+        const random_number = await redis_client.HRANDFIELD(`cursor`);
+        await redis_client.HDEL(`cursor`, random_number);
+    }
+
+    await redis_client.HSET(`cursor`, { [sms.numero]: JSON.stringify(cursor) });
 }
 
 exports.persistSms = async (sms, cursor) => {
@@ -326,7 +336,7 @@ exports.persistSms = async (sms, cursor) => {
 
         const clause = {
             insert_into: `history (number_provider, sms)`,
-            values: `'${number}_${provider}_${cursor[provider].total}', '${JSON.stringify(sms)}'`,
+            values: `'${number}_${provider}_${cursor[provider].t}', '${JSON.stringify(sms)}'`,
             on_conflict: `number_provider`,
             do_update: `SET sms = '${JSON.stringify(sms)}'`
         };
@@ -371,7 +381,7 @@ exports.persistSms = async (sms, cursor) => {
         await this.updateCursor(sms, cursor);
 
         try {
-            await redis_client.ZADD(`rank`, {score: Math.floor(cursor.total/cursor.sms_counter), value: sms.numero});
+            await redis_client.ZADD(`rank`, {score: Math.floor(cursor.to/cursor.sc), value: sms.numero});
         }
         catch (error) {
 
@@ -387,7 +397,7 @@ exports.persistSms = async (sms, cursor) => {
                 provider: sms.fornecedor,
                 status: sms.status,
                 date: new Date().getTime(),
-                rank: Math.floor(cursor.total / cursor.sms_counter),
+                rank: Math.floor(cursor.to / cursor.sc),
                 message: 'Successfully inserted history'
             };
 
@@ -433,16 +443,19 @@ exports.rankSms = async (sms) => {
 
     let cursor = await redis_client.HGET(`cursor`, sms.numero);
 
-    cursor = JSON.parse(cursor) || {"total": 0, "sms_counter": 0};
-    cursor[sms.fornecedor] = cursor[sms.fornecedor] || {"total": 0, "statement": "insert"};
+    // To: sum of all ranks on this number history / Sc: number of sms on this number history 
+    cursor = JSON.parse(cursor) || await this.reSyncCursor(sms.numero) || {"to": 0, "sc": 0};
+
+    // T: number of sms sent by this provider / S: statement (i: insert or u: update) / 
+    cursor[sms.fornecedor] = cursor[sms.fornecedor] || {"t": 0, "s": "i"};
     
     const provider_leverage = provider[sms.status.toLowerCase()];
     const has_mo = await this.hasMo(sms, cursor, provider_leverage);
-    
+
     if (has_mo)
         return 100;
 
-    const number_average = cursor.total === 0 ? 50 : Math.floor(cursor.total / cursor.sms_counter);
+    const number_average = cursor.to === 0 ? 50 : Math.floor(cursor.to / cursor.sc);
 
     const rank = this.calculateRank(number_average, provider_leverage, sms.status);
 
@@ -599,7 +612,14 @@ exports.startApp = async () => {
 
     while (true) {
 
+        const memory_usage = await redis_client.MEMORY_USAGE(`cursor`) / 1024 / 1024;
+        console.log('memory_usage', memory_usage);
+
+        if (memory_usage > config.cursor_memory_limit)
+            break;
+
         const pipeline = new ioredis.Pipeline(redis);
+        const limit = 2000000;
 
         let clause = {
             select: `COUNT(*), split_part(number_provider, '_', 1) || '~' || split_part(number_provider, '_', 2) as id,
@@ -607,8 +627,8 @@ exports.startApp = async () => {
             from: `history`,
             group_by: `id`,
             order_by: `2`,
-            limit: `1000000`,
-            offset: `${counter * 1000000}`
+            limit: `${limit}`,
+            offset: `${counter * limit}`
         };
 
         query = `SELECT ${clause.select} FROM ${clause.from} GROUP BY ${clause.group_by} ORDER BY ${clause.order_by} LIMIT ${clause.limit} OFFSET ${clause.offset}`;
@@ -623,15 +643,15 @@ exports.startApp = async () => {
             const row = history.rows.pop();
             const [number, provider] = row.id.split('~');
             
-            const cursor = cursors[number] || { total: 0, sms_counter: 0 };
+            const cursor = cursors[number] || { to: 0, sc: 0 };
 
-            cursor.total += parseInt(row.sum), cursor.sms_counter += parseInt(row.count);
-            cursor[provider] = { total: row.count, statement: "insert" };
+            cursor.to += parseInt(row.sum), cursor.sc += parseInt(row.count);
+            cursor[provider] = { t: row.count, s: "i" };
 
-            if (cursor.sms_counter == sms_counter[number]) {
+            if (cursor.sc == sms_counter[number]) {
 
                 pipeline.hset(`cursor`, { [number]: JSON.stringify(cursor) });
-                pipeline.zadd(`rank`, Math.floor(cursor.total / cursor.sms_counter), number);
+                pipeline.zadd(`rank`, Math.floor(cursor.to / cursor.sc), number);
 
                 delete cursors[number];
             }
