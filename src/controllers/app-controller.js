@@ -510,28 +510,26 @@ exports.setDashboard = async () => {
     const history_logs = new Object();
     for (let i = 0; i < 14; i++){
 
-        const date = utils.getYmdDate(new Date());
+        const date = utils.getYmdDate(new Date(Date.now() - i * 86400000));
+        console.log(date)
+        const possible_statuses = { s200: 0, s404: 0, s500: 0, s503: 0, MO: 0, default: 0 };
 
         const clause = {
             select: `to_timestamp(date/1000)::date AS log_date, status || ': ' || count(status) as count`,
             from: `log_history`,
-            where: `to_timestamp(date/1000)::date = '${date}'::date - interval '${i} days'`,
+            where: `to_timestamp(date/1000)::date = '${date}'::date`,
             group_by: `log_date, status`
         };
         const query = `SELECT ${clause.select} FROM ${clause.from} WHERE ${clause.where} GROUP BY ${clause.group_by}`;
 
         const result = await postgres_client.query(query);
-
+        
+        history_logs[date.toString()] = possible_statuses;
         result.rows.forEach((row) => {
-            const date = row.log_date;
+
             const [status, logs_quantity] = row.count.split(':');
 
-            const first_iteration_from_date = history_logs[date] === undefined;
-
-            if (first_iteration_from_date)
-                history_logs[date] = new Object();
-
-            history_logs[date][status] = logs_quantity;
+            history_logs[date.toString()][status] += parseInt(logs_quantity);
         });
     }
     dashboard.log_history = history_logs;
