@@ -3,6 +3,7 @@ require('dotenv').config();
 let config = require('../config/app');
 const utils = require('./scripts/utils');
 
+const db = require('./scripts/db');
 const redis_client = require('./db/redis');
 
 const controller = require('./controllers/app-controller');
@@ -14,14 +15,27 @@ exports.main = async () => {
     console.log(`${new Date().toLocaleTimeString()} - Loading instance ${instance}...`);
 
     if (instance == 1){
+
+        const check_database = (config.check_database === 'yes' || config.check_database === 'y');
      
         console.log(`${new Date().toLocaleTimeString()} - Loading app on instance 1...`);
 
         await redis_client.SET(`loaded`, 'false');
 
+        if (check_database) {
+
+            console.log(`${new Date().toLocaleTimeString()} - Checking database...`);
+            
+            let databaseTimer = Date.now();
+            db.create_database();
+            databaseTimer = utils.formatTime(Date.now() - databaseTimer);
+
+            console.log(`${new Date().toLocaleTimeString()} - Database checked in ${databaseTimer}.`);
+        }
+        
         let startTimer = Date.now();
         // await utils.sleep(1);
-        // await controller.executeOnInstance(instance, 'startApp');
+        await controller.executeOnInstance(instance, 'startApp');
         startTimer = utils.formatTime(Date.now() - startTimer);
 
         let dashboardTimer = Date.now();

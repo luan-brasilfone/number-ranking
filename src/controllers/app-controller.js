@@ -508,10 +508,9 @@ exports.setDashboard = async () => {
     dashboard.ranks = await redis_client.ZCOUNT(`rank`, '-inf', '+inf');    
 
     const history_logs = new Object();
-    for (let i = 0; i < 14; i++){
+    for (let i = 0; i < 14; i++) {
 
         const date = utils.getYmdDate(new Date(Date.now() - i * 86400000));
-        console.log(date)
         const possible_statuses = { s200: 0, s404: 0, s500: 0, s503: 0, MO: 0, default: 0 };
 
         const clause = {
