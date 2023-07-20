@@ -13,7 +13,7 @@ if (docker_config.use_containers === 'yes' || docker_config.use_containers === '
 	docker_end_line = `"`;
 }
 
-exports.create_database = () => {
+exports.createDatabase = () => {
 
 	const create_table = `CREATE TABLE IF NOT EXISTS`;
 	const pg_password = `PGPASSWORD=${postgres_config.password}`;
@@ -50,7 +50,7 @@ exports.create_database = () => {
 
 	if (use_schemas) {
 
-		const schemas = this.get_schemas();
+		const schemas = this.getSchemas();
 	
 		for (let i = 0; i < schemas.length; i++) {
 	
@@ -72,7 +72,7 @@ exports.create_database = () => {
 	}
 };
 
-exports.get_tables_from_structure = () => {
+exports.getTablesFromStructure = () => {
 
 	const { type, country_code, ddd, range } = db_config;
 	
@@ -134,11 +134,41 @@ exports.get_tables_from_structure = () => {
 	return tables;
 };
 
-exports.get_schemas = () => {
+exports.getSchemas = () => {
 
 	let type = [];
 
 	type = db_config.type;
 
 	return type;
+};
+
+exports.getNumberTable = (number) => {
+
+	const type = number.length === 12 ? 'fixed' : 'mobile';
+	const spread = db_config.range[type].spread;
+	const country_code = number.substring(0, 2);
+	const ddd = number.substring(2, 4);
+	let range = number.substring(4, 5);
+
+	if (spread.includes( parseInt(range) )){
+
+		range = number.substring(4, 6);
+		
+		if (spread.includes( parseInt(range) ))
+			range = number.substring(4, 7);
+	}
+
+	let table = type + country_code + ddd + range;
+
+	if (use_schemas)
+		table = `${type}"."${country_code}${ddd}${range}`;
+
+	return table;
+};
+
+exports.getDDDs = () => {
+
+	const { ddd } = db_config;
+	return ddd;
 };

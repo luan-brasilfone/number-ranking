@@ -24,6 +24,8 @@ exports.main = async () => {
     const providers_doesnt_exist = !controller.checkProviders();
     const numbers_doesnt_exist = !controller.checkNumbers();
 
+    await utils.sleep(5);
+
     if (providers_doesnt_exist) {
         console.log(`${new Date().toLocaleTimeString()} - Generating providers...`)
         // controller.generateProviders();
@@ -58,7 +60,7 @@ exports.main = async () => {
 
         const delay = exports.getDelay(config.min_delay, config.max_delay);
         
-        const sms_list = controller.generateSmsList();
+        const sms_list = await controller.generateSmsList();
         const result = controller.postSmsList(sms_list);
         
         switch (result) {

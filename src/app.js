@@ -27,19 +27,19 @@ exports.main = async () => {
             console.log(`${new Date().toLocaleTimeString()} - Checking database...`);
             
             let databaseTimer = Date.now();
-            db.create_database();
+            db.createDatabase();
             databaseTimer = utils.formatTime(Date.now() - databaseTimer);
 
             console.log(`${new Date().toLocaleTimeString()} - Database checked in ${databaseTimer}.`);
         }
         
         let startTimer = Date.now();
-        // await utils.sleep(1);
-        await controller.executeOnInstance(instance, 'startApp');
+        await utils.sleep(1);
+        // await controller.executeOnInstance(instance, 'startApp');
         startTimer = utils.formatTime(Date.now() - startTimer);
 
         let dashboardTimer = Date.now();
-        await controller.executeOnInstance(instance, 'setDashboard');
+        // await controller.executeOnInstance(instance, 'setDashboard');
         dashboardTimer = utils.formatTime(Date.now() - dashboardTimer);
 
         await redis_client.SET(`loaded`, `true`);

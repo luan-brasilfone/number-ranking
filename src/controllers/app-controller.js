@@ -1,7 +1,9 @@
 let config = require('../../config/app');
-const utils = require('../scripts/utils');
 const redis_client = require('../db/redis');
 const postgres_client = require('../db/postgres');
+
+const db = require('../scripts/db');
+const utils = require('../scripts/utils');
 
 const log_controller = require('./log-controller');
 
@@ -9,11 +11,13 @@ exports.reSyncCursor = async (number) => {
 
     try {
 
+        const table = db.getNumberTable(number);
+
         const clause = {
             select: `*, split_part(number_provider, '_', 2) as provider`,
-            from: `history`,
+            from: `"${table}"`,
             where: `number_provider LIKE '${number}_%'`,
-        }
+        };
         const query = `SELECT ${clause.select} FROM ${clause.from} WHERE ${clause.where}`;
 
         const history = await postgres_client.query(query);
@@ -294,7 +298,9 @@ exports.updateCursor = async (sms, cursor) => {
 
         if (cursor[provider].s == "u"){
 
-            let old_leverage = await postgres_client.query(`SELECT sms FROM history WHERE number_provider = '${number}_${provider}_${cursor[provider]}'`);
+            const table = db.getNumberTable(number);
+
+            let old_leverage = await postgres_client.query(`SELECT sms FROM "${table}" WHERE number_provider = '${number}_${provider}_${cursor[provider]}'`);
     
             cursor.to -= old_leverage.rows[0].sms.peso;
         }
@@ -311,7 +317,7 @@ exports.updateCursor = async (sms, cursor) => {
         console.error(`${new Date().toLocaleTimeString()} - Could not update cursor for ${sms.numero} on ${sms.fornecedor}... Re-syncing...`);
         console.error(error);
 
-        cursor = await reSyncCursor(sms.numero);
+        cursor = await this.reSyncCursor(sms.numero);
     }
 
     // If cursor memory limit is reached, persist cursor then removes a random one from hash
@@ -331,11 +337,16 @@ exports.persistSms = async (sms, cursor) => {
     let success = false;
     try {
 
+        console.time('getNumberTable');
         const [number, provider] = [sms.numero, sms.fornecedor];
         delete sms.numero, delete sms.fornecedor;
 
+        const table = db.getNumberTable(number);
+        console.timeEnd('getNumberTable');
+
+        console.time('query');
         const clause = {
-            insert_into: `history (number_provider, sms)`,
+            insert_into: `"${table}" (number_provider, sms)`,
             values: `'${number}_${provider}_${cursor[provider].t}', '${JSON.stringify(sms)}'`,
             on_conflict: `number_provider`,
             do_update: `SET sms = '${JSON.stringify(sms)}'`
@@ -344,6 +355,7 @@ exports.persistSms = async (sms, cursor) => {
         query = `INSERT INTO ${clause.insert_into} VALUES (${clause.values}) ON CONFLICT (${clause.on_conflict}) DO UPDATE ${clause.do_update}`;
 
         await postgres_client.query(query);
+        console.timeEnd('query');
 
         [sms.numero, sms.fornecedor] = [number, provider];
         success = true;
@@ -378,10 +390,13 @@ exports.persistSms = async (sms, cursor) => {
 
     if (success) {
 
+        console.time('updateCursor');
         await this.updateCursor(sms, cursor);
+        console.timeEnd('updateCursor');
 
-        try {
+        try {console.time('zadd');
             await redis_client.ZADD(`rank`, {score: Math.floor(cursor.to/cursor.sc), value: sms.numero});
+            console.timeEnd('zadd');
         }
         catch (error) {
 
@@ -391,6 +406,7 @@ exports.persistSms = async (sms, cursor) => {
         }
 
         try {
+            console.time('log');
             let log = {
                 type: 'history',
                 number: sms.numero,
@@ -402,6 +418,7 @@ exports.persistSms = async (sms, cursor) => {
             };
 
             await redis_client.RPUSH(`log-history-${this.instance}`, JSON.stringify(log));
+            console.timeEnd('log');
         }
         catch (error) {
             console.error(`${new Date().toLocaleTimeString()} - Could not log history for ${sms.numero} on ${sms.fornecedor}... Skipping...`);
@@ -445,10 +462,11 @@ exports.rankSms = async (sms) => {
 
     // To: sum of all ranks on this number history / Sc: number of sms on this number history 
     cursor = JSON.parse(cursor) || await this.reSyncCursor(sms.numero) || {"to": 0, "sc": 0};
+    // cursor = JSON.parse(cursor) || {"to": 0, "sc": 0};
 
     // T: number of sms sent by this provider / S: statement (i: insert or u: update) / 
     cursor[sms.fornecedor] = cursor[sms.fornecedor] || {"t": 0, "s": "i"};
-    
+
     const provider_leverage = provider[sms.status.toLowerCase()];
     const has_mo = await this.hasMo(sms, cursor, provider_leverage);
 
@@ -535,7 +553,7 @@ exports.setDashboard = async () => {
 
     const queries = {
         log_mo: `SELECT * FROM log_mo WHERE message = 'New MO' ORDER BY id desc LIMIT 3;`,
-        ranked_by_provider: `SELECT COUNT (*), provider AS code from log_history GROUP BY provider ORDER BY count`,
+        ranked_by_provider: `SELECT COUNT (*), provider AS code FROM log_history GROUP BY provider ORDER BY count`,
         history_errors: `SELECT COUNT (*) FROM log_history WHERE "message" = 'Could not insert history'`,
         mo_errors: `SELECT COUNT (*) FROM log_mo WHERE status = 'error'`,
         provider_errors: `SELECT COUNT (*) FROM log_provider WHERE status = 'error'`
@@ -597,69 +615,75 @@ exports.startApp = async () => {
         delete providers_wrapper;
     }
 
-    let query = `SELECT COUNT(*), split_part(number_provider, '_', 1) as number FROM history GROUP BY number`;
-    let number_sms_counter_wrapper = await postgres_client.query(query);
-    const sms_counter = new Object();
+    const tables = db.getTablesFromStructure();
 
-    for (row of number_sms_counter_wrapper.rows) {
-        sms_counter[row.number] = row.count;
-        delete row;
-    }
-    number_sms_counter_wrapper = undefined;
+    const promises = tables.map(async (table) => {
 
-    while (true) {
+        let query = `SELECT COUNT(*), split_part(number_provider, '_', 1) as number FROM "${table}" GROUP BY number`;
+        let number_sms_counter_wrapper = await postgres_client.query(query);
+        const sms_counter = new Object();
 
-        const memory_usage = await redis_client.MEMORY_USAGE(`cursor`) / 1024 / 1024;
-        console.log('memory_usage', memory_usage);
-
-        if (memory_usage > config.cursor_memory_limit)
-            break;
-
-        const pipeline = new ioredis.Pipeline(redis);
-        const limit = 2000000;
-
-        let clause = {
-            select: `COUNT(*), split_part(number_provider, '_', 1) || '~' || split_part(number_provider, '_', 2) as id,
-                     sum( (sms->'peso')::integer )`,
-            from: `history`,
-            group_by: `id`,
-            order_by: `2`,
-            limit: `${limit}`,
-            offset: `${counter * limit}`
-        };
-
-        query = `SELECT ${clause.select} FROM ${clause.from} GROUP BY ${clause.group_by} ORDER BY ${clause.order_by} LIMIT ${clause.limit} OFFSET ${clause.offset}`;
-        
-        let history = await postgres_client.query(query);
-
-        if (history.rows.length == 0)
-            break;
-
-        while (history.rows.length){
-
-            const row = history.rows.pop();
-            const [number, provider] = row.id.split('~');
-            
-            const cursor = cursors[number] || { to: 0, sc: 0 };
-
-            cursor.to += parseInt(row.sum), cursor.sc += parseInt(row.count);
-            cursor[provider] = { t: row.count, s: "i" };
-
-            if (cursor.sc == sms_counter[number]) {
-
-                pipeline.hset(`cursor`, { [number]: JSON.stringify(cursor) });
-                pipeline.zadd(`rank`, Math.floor(cursor.to / cursor.sc), number);
-
-                delete cursors[number];
-            }
-            else {
-                cursors[number] = cursor;
-            }
+        for (row of number_sms_counter_wrapper.rows) {
+            sms_counter[row.number] = row.count;
+            delete row;
         }
-    
-        counter++;
-        await pipeline.exec();
-    }
+        number_sms_counter_wrapper = undefined;
+
+        while (true) {
+
+            const memory_usage = await redis_client.MEMORY_USAGE(`cursor`) / 1024 / 1024;
+
+            if (memory_usage > config.cursor_memory_limit)
+                break;
+
+            const pipeline = new ioredis.Pipeline(redis);
+            const limit = 2000000;
+
+            let clause = {
+                select: `COUNT(*), split_part(number_provider, '_', 1) || '~' || split_part(number_provider, '_', 2) as id,
+                        sum( (sms->'peso')::integer )`,
+                from: `"${table}"`,
+                group_by: `id`,
+                order_by: `2`,
+                limit: `${limit}`,
+                offset: `${counter * limit}`
+            };
+
+            query = `SELECT ${clause.select} FROM ${clause.from} GROUP BY ${clause.group_by} ORDER BY ${clause.order_by} LIMIT ${clause.limit} OFFSET ${clause.offset}`;
+            
+            let history = await postgres_client.query(query);
+
+            if (history.rows.length == 0)
+                break;
+
+            while (history.rows.length){
+
+                const row = history.rows.pop();
+                const [number, provider] = row.id.split('~');
+                
+                const cursor = cursors[number] || { to: 0, sc: 0 };
+
+                cursor.to += parseInt(row.sum), cursor.sc += parseInt(row.count);
+                cursor[provider] = { t: row.count, s: "i" };
+
+                if (cursor.sc == sms_counter[number]) {
+
+                    pipeline.hset(`cursor`, { [number]: JSON.stringify(cursor) });
+                    pipeline.zadd(`rank`, Math.floor(cursor.to / cursor.sc), number);
+
+                    delete cursors[number];
+                }
+                else {
+                    cursors[number] = cursor;
+                }
+            }
+        
+            counter++;
+            await pipeline.exec();
+        }
+    });
+
+    await Promise.all(promises);
 }
 
 exports.setConfig = async (new_config) => {
