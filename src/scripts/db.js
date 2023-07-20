@@ -5,6 +5,7 @@ const docker_config = require('../../config/docker.js');
 const { execSync } = require('child_process');
 
 const docker_start_line = docker_end_line = "";
+const use_schemas = (db_config.use_schemas === 'yes' || db_config.use_schemas === 'y');
 
 if (docker_config.use_containers === 'yes' || docker_config.use_containers === 'y') {
 
@@ -34,8 +35,8 @@ exports.create_database = () => {
 	const command_log_provider = `${psql_command} '${table_log_provider}'`;
 	const command_log_history = `${psql_command} '${table_log_history}'`;
 
-	if (docker_config.drop_database === 'yes' || docker_config.drop_database === 'y')
-		execSync(command_drop);
+	// if (docker_config.drop_database === 'yes' || docker_config.drop_database === 'y')
+	// 	execSync(command_drop);
 		
 	try {
 		execSync(command_create);
@@ -47,14 +48,17 @@ exports.create_database = () => {
 	execSync(command_log_provider);
 	execSync(command_log_history);
 
-	const schemas = this.get_schemas();
+	if (use_schemas) {
 
-	for (let i = 0; i < schemas.length; i++) {
-
-		const schema = schemas[i];
-		const command_schema = `CREATE SCHEMA IF NOT EXISTS "${schema}";`;
+		const schemas = this.get_schemas();
 	
-		execSync(`${psql_command} '${command_schema}'`);
+		for (let i = 0; i < schemas.length; i++) {
+	
+			const schema = schemas[i];
+			const command_schema = `CREATE SCHEMA IF NOT EXISTS "${schema}";`;
+		
+			execSync(`${psql_command} '${command_schema}'`);
+		}
 	}
 
 	const tables = this.get_tables_from_structure();
@@ -76,7 +80,10 @@ exports.get_tables_from_structure = () => {
 
 	type.forEach(type => {
 
-		const output_a = `${type}"."`;
+		let output_a = type.toString();
+
+		if (use_schemas)
+			output_a = `${type}"."`;
 
 		country_code.forEach(country_code => {
 			

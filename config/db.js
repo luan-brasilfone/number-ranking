@@ -1,4 +1,5 @@
 module.exports = {
+    use_schemas: process.env.USE_SCHEMAS || 'no',
     table_structure: ['type', 'country_code', 'ddd', 'range'],
     type: ['mobile', 'fixed'],
     country_code: [55],
